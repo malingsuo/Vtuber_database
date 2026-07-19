@@ -8,6 +8,7 @@ from app import schemas
 from app.deps import get_company_id, get_db
 from app.models import (
     Artist,
+    BundleItem,
     Event,
     InventoryMovement,
     MovementType,
@@ -139,6 +140,26 @@ def event_overview(
         ).all()
         stats = {r[0]: (int(r[1]), int(r[2]), Decimal(r[3] or 0)) for r in rows}
 
+    # 套組內容物：一次查完，組成「商品名（規格）× 數量」
+    bundle_ids = [p.id for p in products if p.is_bundle]
+    contents_map: dict[int, list[schemas.BundleContent]] = {}
+    if bundle_ids:
+        content_rows = db.execute(
+            select(
+                BundleItem.bundle_product_id,
+                Product.name,
+                ProductVariant.variant_name,
+                BundleItem.quantity,
+            )
+            .join(ProductVariant, BundleItem.variant_id == ProductVariant.id)
+            .join(Product, ProductVariant.product_id == Product.id)
+            .where(BundleItem.bundle_product_id.in_(bundle_ids))
+        ).all()
+        for bid, pname, vname, qty in content_rows:
+            contents_map.setdefault(bid, []).append(
+                schemas.BundleContent(name=f"{pname}（{vname}）", quantity=qty)
+            )
+
     blocks: list[schemas.ArtistBlock] = []
     current_artist: Artist | None = None
     for product in products:
@@ -157,6 +178,7 @@ def event_overview(
                 name=product.name,
                 price_twd=product.price_twd,
                 is_bundle=product.is_bundle,
+                bundle_contents=contents_map.get(product.id, []),
                 variants=[
                     schemas.VariantStats(
                         id=v.id,

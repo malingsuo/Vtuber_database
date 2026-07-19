@@ -41,6 +41,7 @@ function rows(block) {
     p.variants.map((v) => ({
       product: p.name,
       is_bundle: p.is_bundle,
+      bundle_contents: p.bundle_contents ?? [],
       variant: v.variant_name,
       price: Number(p.price_twd),
       cost: Number(v.cost_twd),
@@ -188,7 +189,16 @@ async function confirmDelete() {
           <el-table-column label="商品" min-width="180">
             <template #default="{ row }">
               {{ row.product }}
-              <el-tag v-if="row.is_bundle" size="small" type="success">套組</el-tag>
+              <el-tooltip v-if="row.is_bundle" placement="right" effect="light">
+                <template #content>
+                  <div style="font-weight: bold; margin-bottom: 4px">套組內容物</div>
+                  <div v-for="c in row.bundle_contents" :key="c.name">
+                    {{ c.name }} × {{ c.quantity }}
+                  </div>
+                  <div v-if="!row.bundle_contents.length">（尚未設定內容物）</div>
+                </template>
+                <el-tag size="small" type="success" style="cursor: help">套組</el-tag>
+              </el-tooltip>
             </template>
           </el-table-column>
           <el-table-column prop="variant" label="規格" width="90" />

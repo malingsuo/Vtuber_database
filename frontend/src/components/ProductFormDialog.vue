@@ -152,11 +152,12 @@ async function submit() {
           style="margin-left: 24px"
         />
       </el-form-item>
-
+      
+      <!-- 到時候要修改名稱 -->
       <el-form-item label="商品名稱" required>
         <el-input
           v-model="form.name"
-          :placeholder="form.is_bundle ? '例：小貓全套組' : '選了品項會自動帶出，可修改'"
+          :placeholder="form.is_bundle ? '例：福泥全套組' : '選了品項會自動帶出'"
         />
       </el-form-item>
 
@@ -175,12 +176,12 @@ async function submit() {
                 style="width: 170px"
               />
               <el-input-number
-                v-model="v.production_qty" :min="0"
-                placeholder="製作量" style="width: 120px"
+                v-model="v.production_qty" :min="0" :controls="false"
+                placeholder="製作量" style="width: 100px"
               />
               <el-input-number
-                v-model="v.cost_amount" :min="0" :precision="2"
-                placeholder="單位成本(原幣)" style="width: 150px"
+                v-model="v.cost_amount" :min="0" :precision="2" :controls="false"
+                placeholder="單位成本" style="width: 140px"
               />
               <el-select v-model="v.cost_currency" style="width: 90px">
                 <el-option label="TWD" value="TWD" />
@@ -188,8 +189,8 @@ async function submit() {
                 <el-option label="JPY" value="JPY" />
               </el-select>
               <el-input-number
-                v-model="v.exchange_rate" :min="0.0001" :precision="4" :step="0.1"
-                placeholder="匯率" style="width: 110px"
+                v-model="v.exchange_rate" :min="0.0001" :precision="4" :controls="false"
+                placeholder="匯率" style="width: 90px"
                 :disabled="v.cost_currency === 'TWD'"
               />
               <span class="hint">= NT${{ twd(v) }}</span>
@@ -224,7 +225,7 @@ async function submit() {
               <span class="hint">件/套</span>
             </div>
             <div class="hint" style="margin-left: 0">
-              同一件單品可以被多個套組收錄，不衝突
+              同一件單品可以被多個套組收錄
             </div>
           </div>
           <div v-else class="hint" style="margin-left: 0">
@@ -240,7 +241,7 @@ async function submit() {
       </el-form-item>
 
       <el-form-item label="製作聯絡人">
-        <el-input v-model="form.contact_person" placeholder="選填，公司內部備忘" style="width: 200px" />
+        <el-input v-model="form.contact_person" placeholder="選填(公司內部備忘)" style="width: 200px" />
       </el-form-item>
 
       <el-form-item label="備註">

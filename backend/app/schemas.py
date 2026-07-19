@@ -206,6 +206,11 @@ class VariantStats(BaseModel):
     revenue_twd: Decimal
 
 
+class BundleContent(BaseModel):
+    name: str  # 「商品名（規格）」
+    quantity: int
+
+
 class ProductWithStats(BaseModel):
     id: int
     item_type_id: int | None
@@ -213,6 +218,7 @@ class ProductWithStats(BaseModel):
     price_twd: Decimal
     is_bundle: bool
     variants: list[VariantStats]
+    bundle_contents: list[BundleContent] = []  # 套組才有值，給前端懸浮顯示
 
 
 class ArtistBlock(BaseModel):
