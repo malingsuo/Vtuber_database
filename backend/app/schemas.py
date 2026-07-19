@@ -388,10 +388,12 @@ class ReportRow(BaseModel):
     cogs: Decimal      # 銷貨成本 = 售出 × 單位成本
     gross: Decimal     # 毛利 = 營收 − 銷貨成本
     sell_through: float  # 銷售率 = 售出 / 製作量
+    allocated: bool = False  # 套組列已被攤分歸零（Phase 1）
 
 
 class EventReport(BaseModel):
     event: "EventOut"
+    allocate_bundles: bool = False  # 本次回傳是否為攤分口徑
     production: int
     sold: int
     sell_through: float

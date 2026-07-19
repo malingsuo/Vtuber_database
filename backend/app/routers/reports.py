@@ -18,6 +18,7 @@ from app import schemas
 from app.deps import get_company_id, get_db
 from app.models import (
     Artist,
+    BundleItem,
     Event,
     Expense,
     InventoryMovement,
@@ -82,6 +83,7 @@ def _product_variant_rows(db: Session, cid: int, event_id: int | None, year: int
             ProductVariant.id,
             ProductVariant.production_qty,
             ProductVariant.cost_twd,
+            Product.id.label("product_id"),
             Product.artist_id,
             Artist.name.label("artist_name"),
             Product.item_type_id,
@@ -140,9 +142,85 @@ def _sum_rows(rows, stats, key_fn, name_fn):
     return out
 
 
+def _apply_bundle_allocation(db: Session, rows, stats) -> tuple[dict, bool]:
+    """套組營收攤分（Phase 1）：把套組的售出/營收按權重加回內容物，套組歸零。
+
+    權重 = 內容物單售定價 × 件數 ÷ Σ(定價 × 件數)；分母為 0（全贈品）平均分攤。
+    分攤採「逐項捨入＋餘數塞給最大權重者」，保證加總與原值一分不差。
+    回傳 (攤分後的 stats, 是否有套組被攤分)。
+    """
+    bundle_variants: dict[int, list[int]] = {}  # bundle product_id -> [variant ids]
+    for r in rows:
+        if r.is_bundle:
+            bundle_variants.setdefault(r.product_id, []).append(r.id)
+    if not bundle_variants:
+        return stats, False
+
+    content_rows = db.execute(
+        select(
+            BundleItem.bundle_product_id,
+            BundleItem.variant_id,
+            BundleItem.quantity,
+            Product.price_twd,
+        )
+        .join(ProductVariant, BundleItem.variant_id == ProductVariant.id)
+        .join(Product, ProductVariant.product_id == Product.id)
+        .where(BundleItem.bundle_product_id.in_(bundle_variants))
+    ).all()
+
+    event_variant_ids = {r.id for r in rows}
+    # 可變副本：{variant_id: [sold, revenue, pr_qty]}
+    new_stats = {vid: [s[0], s[1], s[2]] for vid, s in stats.items()}
+    allocated_any = False
+
+    for pid, vids in bundle_variants.items():
+        # 只攤給「同活動內」的內容物；跨活動引用（資料模型允許但 UI 不會產生）
+        # 的部分保留在套組上，避免營收憑空消失
+        items = [
+            c for c in content_rows
+            if c.bundle_product_id == pid and c.variant_id in event_variant_ids
+        ]
+        if not items:
+            continue
+
+        bundle_sold = sum(new_stats.get(v, [0])[0] for v in vids)
+        bundle_rev = sum(
+            (new_stats.get(v, [0, Decimal(0)])[1] for v in vids), Decimal(0)
+        )
+        if bundle_sold == 0 and bundle_rev == 0:
+            allocated_any = True  # 沒東西可攤，但口徑上視為已攤分（歸零維持）
+            continue
+
+        bases = [Decimal(c.price_twd) * c.quantity for c in items]
+        total_base = sum(bases, Decimal(0))
+        if total_base > 0:
+            weights = [b / total_base for b in bases]
+        else:  # 內容物全是贈品 → 平均分攤
+            weights = [Decimal(1) / len(items)] * len(items)
+        top = max(range(len(items)), key=lambda i: weights[i])
+
+        rev_parts = [(bundle_rev * w).quantize(Decimal("0.01")) for w in weights]
+        rev_parts[top] += bundle_rev - sum(rev_parts, Decimal(0))  # 餘數補回
+        sold_parts = [int(round(bundle_sold * float(w))) for w in weights]
+        sold_parts[top] += bundle_sold - sum(sold_parts)
+
+        for c, rev_i, sold_i in zip(items, rev_parts, sold_parts):
+            target = new_stats.setdefault(c.variant_id, [0, Decimal(0), 0])
+            target[0] += sold_i
+            target[1] += rev_i
+        for v in vids:  # 套組自身歸零（公關件數不動，公關成本另計）
+            if v in new_stats:
+                new_stats[v][0] = 0
+                new_stats[v][1] = Decimal(0)
+        allocated_any = True
+
+    return {vid: tuple(s) for vid, s in new_stats.items()}, allocated_any
+
+
 @router.get("/events/{event_id}", response_model=schemas.EventReport)
 def event_report(
     event_id: int,
+    allocate_bundles: bool = False,
     db: Session = Depends(get_db),
     cid: int = Depends(get_company_id),
 ):
@@ -154,6 +232,23 @@ def event_report(
 
     rows = _product_variant_rows(db, cid, event_id, None)
     stats = _variant_stats(db, [r.id for r in rows])
+
+    allocated_any = False
+    if allocate_bundles:
+        revenue_before = sum(
+            (stats.get(r.id, (0, Decimal(0), 0))[1] for r in rows), Decimal(0)
+        )
+        stats, allocated_any = _apply_bundle_allocation(db, rows, stats)
+        revenue_after = sum(
+            (stats.get(r.id, (0, Decimal(0), 0))[1] for r in rows), Decimal(0)
+        )
+        # 驗收等式（ROADMAP Phase 1）：攤分不能改變活動總營收，差一分即中止
+        if revenue_after != revenue_before:
+            raise HTTPException(
+                500,
+                f"攤分檢核失敗：攤分前 {revenue_before} ≠ 攤分後 {revenue_after}，"
+                "已中止回傳，請回報開發者",
+            )
 
     production = sum(r.production_qty for r in rows)
     sold = sum(stats.get(r.id, (0, Decimal(0), 0))[0] for r in rows)
@@ -174,8 +269,20 @@ def event_report(
     expenses_total = sum((Decimal(e.amount_twd) for e in expenses), Decimal(0))
     gross = revenue - cogs
 
+    by_item_type = _sum_rows(
+        rows,
+        stats,
+        lambda r: r.item_type_id,  # 套組為 None，自然聚成一列
+        lambda r: r.item_type_name or "套組",
+    )
+    if allocated_any:
+        for row in by_item_type:
+            if row.id is None:  # 「套組」彙總列
+                row.allocated = True
+
     return schemas.EventReport(
         event=schemas.EventOut.model_validate(event),
+        allocate_bundles=allocate_bundles,
         production=production,
         sold=sold,
         sell_through=sold / production if production else 0.0,
@@ -190,12 +297,7 @@ def event_report(
         by_artist=_sum_rows(
             rows, stats, lambda r: r.artist_id, lambda r: r.artist_name
         ),
-        by_item_type=_sum_rows(
-            rows,
-            stats,
-            lambda r: r.item_type_id,  # 套組為 None，自然聚成一列
-            lambda r: r.item_type_name or "套組",
-        ),
+        by_item_type=by_item_type,
     )
 
 

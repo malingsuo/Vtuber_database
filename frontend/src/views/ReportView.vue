@@ -22,6 +22,7 @@ const evList = ref([])
 const evId = ref(null)
 const report = ref(null)
 const artists = ref([])
+const allocateBundles = ref(false) // 套組營收攤分口徑（Phase 1）
 
 async function onEvYearChange(year) {
   evId.value = null
@@ -35,12 +36,16 @@ async function onEvYearChange(year) {
 async function loadReport() {
   if (!evId.value) return
   const [r, a] = await Promise.all([
-    api.get(`/reports/events/${evId.value}`),
+    api.get(`/reports/events/${evId.value}`, {
+      params: { allocate_bundles: allocateBundles.value },
+    }),
     api.get('/artists'),
   ])
   report.value = r.data
   artists.value = a.data
 }
+
+const allocatedRowClass = ({ row }) => (row.allocated ? 'allocated-row' : '')
 
 const artistName = (id) =>
   artists.value.find((a) => a.id === id)?.name ?? ''
@@ -116,7 +121,18 @@ async function loadSummaries() {
           >
             <el-option v-for="e in evList" :key="e.id" :label="e.name" :value="e.id" />
           </el-select>
+          <el-switch
+            v-model="allocateBundles"
+            active-text="啟用套組營收攤分"
+            :disabled="!evId"
+            @change="loadReport"
+          />
         </el-space>
+        <el-alert
+          v-if="allocateBundles && report"
+          type="info" :closable="false" style="margin-bottom: 12px"
+          title="攤分口徑：套組的營收與售出已按「內容物定價×件數」加權攤回各內容物（跟著內容物的藝人與品項走），套組自身歸零。活動總營收不變；內容物的銷售率可能超過 100%（售出含套組帶出的量）。"
+        />
 
         <template v-if="report">
           <el-row :gutter="12" class="stats">
@@ -162,8 +178,16 @@ async function loadSummaries() {
 
           <el-card class="block">
             <template #header>依品項</template>
-            <el-table :data="report.by_item_type" size="small">
-              <el-table-column prop="name" label="品項" min-width="120" />
+            <el-table
+              :data="report.by_item_type" size="small"
+              :row-class-name="allocatedRowClass"
+            >
+              <el-table-column label="品項" min-width="120">
+                <template #default="{ row }">
+                  {{ row.name }}
+                  <el-tag v-if="row.allocated" size="small" type="info">已攤分</el-tag>
+                </template>
+              </el-table-column>
               <el-table-column prop="production" label="製作量" width="90" align="right" />
               <el-table-column prop="sold" label="售出" width="80" align="right" />
               <el-table-column label="營收" width="120" align="right">
@@ -287,5 +311,8 @@ async function loadSummaries() {
 }
 .block {
   margin-top: 16px;
+}
+:deep(.allocated-row) {
+  color: #c0c4cc; /* 已攤分歸零的套組列反灰 */
 }
 </style>
