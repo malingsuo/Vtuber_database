@@ -13,6 +13,8 @@ sqlalchemy = "^2.0.51"
 alembic = "^1.18.5"
 psycopg = {extras = ["binary"], version = "^3.3.4"}
 pydantic-settings = "^2.14.2"
+numpy = "^2.5.1"
+scipy = "^1.18.0"
 
 
 [build-system]

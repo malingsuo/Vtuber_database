@@ -5,6 +5,7 @@ from app.routers import (
     artists,
     events,
     expenses,
+    forecast,
     inventory,
     item_types,
     preorders,
@@ -30,7 +31,7 @@ app.add_middleware(
 for router in (artists.router, events.router, item_types.router,
                vendors.router, products.router,
                inventory.router, preorders.router,
-               expenses.router, reports.router):
+               expenses.router, reports.router, forecast.router):
     app.include_router(router, prefix="/api")
 
 

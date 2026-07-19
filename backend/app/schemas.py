@@ -362,6 +362,57 @@ class SummaryRow(BaseModel):
     sell_through: float
 
 
+# ── 預測 ──
+
+class DemandObservation(BaseModel):
+    """一筆歷史觀測：某場活動、該藝人 × 該品項的總銷量。"""
+
+    event_name: str
+    event_date: date
+    production: int
+    sold: int
+    sold_out: bool     # 完售的觀測是「需求下限」，估計時會上修
+    demand_est: int
+
+
+class DemandEstimate(BaseModel):
+    mu: float          # 需求期望值
+    sigma: float       # 需求波動（標準差）
+    n_artist: int      # 該藝人 × 該品項的樣本數
+    n_type: int        # 該品項全藝人的樣本數
+    basis: str         # 估計方式的中文說明
+    observations: list[DemandObservation]
+
+
+class QuoteEval(BaseModel):
+    """在某個實際報價點（訂購量 × 單價）下的期望利潤。"""
+
+    quantity: int
+    unit_price_twd: float
+    vendor_name: str | None
+    expected_sold: float
+    expected_profit: float
+    is_best: bool
+
+
+class PriceSuggestion(BaseModel):
+    hist_low: float | None      # 該品項歷史價格帶
+    hist_median: float | None
+    hist_high: float | None
+    suggested: float
+    basis: str
+
+
+class ForecastResult(BaseModel):
+    demand: DemandEstimate
+    critical_ratio: float | None   # 報童模型關鍵比率 (p−c)/(p−s)
+    recommended_qty: int | None
+    expected_profit: float | None
+    warning: str | None
+    price: PriceSuggestion | None
+    quote_evals: list[QuoteEval]
+
+
 # ── 查詢流程：活動總覽（依藝人分組 + 銷售統計）──
 
 class VariantStats(BaseModel):
