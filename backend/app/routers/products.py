@@ -10,7 +10,9 @@ from app.models import (
     Artist,
     BundleItem,
     Event,
+    InventoryMovement,
     ItemType,
+    Preorder,
     Product,
     ProductVariant,
 )
@@ -37,8 +39,9 @@ def _check_fk(db: Session, cid: int, body: schemas.ProductCreate) -> None:
     checks = [
         (Event, body.event_id, "活動"),
         (Artist, body.artist_id, "藝人"),
-        (ItemType, body.item_type_id, "品項類別"),
     ]
+    if body.item_type_id is not None:
+        checks.append((ItemType, body.item_type_id, "品項類別"))
     for model, ref_id, label in checks:
         if not db.scalar(
             select(model.id).where(model.id == ref_id, model.company_id == cid)
@@ -125,6 +128,46 @@ def get_product(
     cid: int = Depends(get_company_id),
 ):
     return _load(db, cid, product_id)
+
+
+@router.delete("/{product_id}", status_code=204)
+def delete_product(
+    product_id: int,
+    db: Session = Depends(get_db),
+    cid: int = Depends(get_company_id),
+):
+    """刪除商品（含其規格與套組內容設定）。
+
+    帳務保護：規格已有庫存異動或預購紀錄就不能刪——那些是歷史帳，
+    刪了帳就對不起來。被其他套組收錄的商品也不能刪。
+    """
+    product = _load(db, cid, product_id)
+    variant_ids = [v.id for v in product.variants]
+
+    if variant_ids:
+        if db.scalar(
+            select(InventoryMovement.id)
+            .where(InventoryMovement.variant_id.in_(variant_ids))
+            .limit(1)
+        ):
+            raise HTTPException(409, "這個商品已有庫存/銷售紀錄，不能刪除")
+        if db.scalar(
+            select(Preorder.id).where(Preorder.variant_id.in_(variant_ids)).limit(1)
+        ):
+            raise HTTPException(409, "這個商品已有預購紀錄，不能刪除")
+        if db.scalar(
+            select(BundleItem.id)
+            .where(BundleItem.variant_id.in_(variant_ids))
+            .limit(1)
+        ):
+            raise HTTPException(409, "這個商品被套組收錄為內容物，請先刪除或修改該套組")
+
+    for item in product.bundle_items:
+        db.delete(item)
+    for variant in product.variants:
+        db.delete(variant)
+    db.delete(product)
+    db.commit()
 
 
 @router.put("/{product_id}", response_model=schemas.ProductOut)

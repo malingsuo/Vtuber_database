@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api.js'
 import ProductFormDialog from '../components/ProductFormDialog.vue'
 
@@ -96,6 +97,53 @@ function addForNewArtist() {
 }
 
 const nt = (n) => `NT$ ${Math.round(n).toLocaleString()}`
+
+// ── 刪除商品 ──
+const deleteProductId = ref(null)
+
+const deletableProducts = computed(() =>
+  (overview.value?.artists ?? []).flatMap((b) =>
+    b.products.map((p) => ({
+      id: p.id,
+      name: p.name,
+      label: `${b.artist.name}｜${p.name}`,
+    })),
+  ),
+)
+
+async function confirmDelete() {
+  const target = deletableProducts.value.find((p) => p.id === deleteProductId.value)
+  if (!target) return
+
+  // 主頁的設定：預設要求輸入商品名稱確認
+  const needTypeName = localStorage.getItem('delete_confirm_by_name') !== 'false'
+  try {
+    if (needTypeName) {
+      await ElMessageBox.prompt(
+        `請輸入完整商品名稱「${target.name}」以確認刪除`,
+        '刪除確認',
+        {
+          confirmButtonText: '刪除',
+          cancelButtonText: '取消',
+          inputValidator: (val) => val === target.name || '名稱不符，請照商品名稱完整輸入',
+        },
+      )
+    } else {
+      await ElMessageBox.confirm(
+        `確定要刪除「${target.label}」嗎？`,
+        '刪除確認',
+        { confirmButtonText: '刪除', cancelButtonText: '取消', type: 'warning' },
+      )
+    }
+  } catch {
+    return // 使用者按了取消
+  }
+
+  await api.delete(`/products/${target.id}`)
+  ElMessage.success(`已刪除 ${target.name}`)
+  deleteProductId.value = null
+  await load()
+}
 </script>
 
 <template>
@@ -178,6 +226,26 @@ const nt = (n) => `NT$ ${Math.round(n).toLocaleString()}`
         </el-space>
       </el-card>
 
+      <el-card class="artist-card danger-block">
+        <el-space wrap>
+          <span>刪除商品：</span>
+          <el-select
+            v-model="deleteProductId" placeholder="選擇要刪除的商品"
+            filterable style="width: 300px" :disabled="!deletableProducts.length"
+          >
+            <el-option
+              v-for="p in deletableProducts" :key="p.id" :label="p.label" :value="p.id"
+            />
+          </el-select>
+          <el-button type="danger" :disabled="!deleteProductId" @click="confirmDelete">
+            刪除
+          </el-button>
+          <span class="meta" style="font-size: 12px">
+            已有銷售/庫存/預購紀錄或被套組收錄的商品會被擋下
+          </span>
+        </el-space>
+      </el-card>
+
       <ProductFormDialog
         v-model="dialogOpen"
         :event-id="eventId"
@@ -221,5 +289,8 @@ const nt = (n) => `NT$ ${Math.round(n).toLocaleString()}`
 }
 .add-block {
   border-style: dashed;
+}
+.danger-block {
+  border-color: #fab6b6;
 }
 </style>

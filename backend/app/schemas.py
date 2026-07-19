@@ -142,7 +142,7 @@ class BundleItemOut(ORMBase):
 class ProductCreate(BaseModel):
     event_id: int
     artist_id: int
-    item_type_id: int
+    item_type_id: int | None = None  # 套組不填；單品必填
     name: str = Field(min_length=1, max_length=200)
     price_twd: Decimal = Field(ge=0)  # 贈品填 0
     is_bundle: bool = False
@@ -155,10 +155,15 @@ class ProductCreate(BaseModel):
 
     @model_validator(mode="after")
     def check_bundle(self) -> "ProductCreate":
-        if self.is_bundle and not self.bundle_items:
-            raise ValueError("套組必須指定內容物 bundle_items")
-        if not self.is_bundle and self.bundle_items:
-            raise ValueError("非套組不可帶 bundle_items")
+        if self.is_bundle:
+            if not self.bundle_items:
+                raise ValueError("套組必須指定內容物 bundle_items")
+            self.item_type_id = None  # 套組一律不掛品項類別
+        else:
+            if self.bundle_items:
+                raise ValueError("非套組不可帶 bundle_items")
+            if self.item_type_id is None:
+                raise ValueError("單品必須指定品項類別")
         if not self.variants:
             raise ValueError("至少要有一個規格")
         return self
@@ -177,7 +182,7 @@ class ProductOut(ORMBase):
     id: int
     event_id: int
     artist_id: int
-    item_type_id: int
+    item_type_id: int | None
     name: str
     price_twd: Decimal
     is_bundle: bool
@@ -203,7 +208,7 @@ class VariantStats(BaseModel):
 
 class ProductWithStats(BaseModel):
     id: int
-    item_type_id: int
+    item_type_id: int | None
     name: str
     price_twd: Decimal
     is_bundle: bool

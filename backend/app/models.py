@@ -166,7 +166,10 @@ class Product(CompanyMixin, TimestampMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), index=True)
     artist_id: Mapped[int] = mapped_column(ForeignKey("artists.id"), index=True)
-    item_type_id: Mapped[int] = mapped_column(ForeignKey("item_types.id"), index=True)
+    # 套組不屬於任何品項類別，故可空；單品必填（由 API 層驗證）
+    item_type_id: Mapped[int | None] = mapped_column(
+        ForeignKey("item_types.id"), index=True
+    )
     name: Mapped[str] = mapped_column(String(200))
     price_twd: Mapped[float] = mapped_column(Numeric(12, 2))  # 贈品填 0
     is_bundle: Mapped[bool] = mapped_column(Boolean, default=False)

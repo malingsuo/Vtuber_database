@@ -14,12 +14,13 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:modelValue', 'saved'])
 
+// 欄位以空值起始，讓格子內的提示文字（placeholder）看得到
 const emptyVariant = () => ({
-  variant_name: '單一規格',
-  production_qty: 0,
-  cost_amount: 0,
+  variant_name: '',
+  production_qty: null,
+  cost_amount: null,
   cost_currency: 'TWD',
-  exchange_rate: 1,
+  exchange_rate: null,
 })
 
 const form = reactive({
@@ -30,8 +31,9 @@ const form = reactive({
   contact_person: '',
   notes: '',
   is_bundle: false,
+  bundle_qty: null,
   variants: [emptyVariant()],
-  bundle_selection: [], // [{ variant_id, quantity }]
+  bundle_selection: [],
 })
 
 watch(
@@ -46,6 +48,7 @@ watch(
         contact_person: '',
         notes: '',
         is_bundle: false,
+        bundle_qty: null,
         variants: [emptyVariant()],
         bundle_selection: props.artistVariants.map((v) => ({
           variant_id: v.id,
@@ -64,13 +67,18 @@ function onItemTypeChange(id) {
   if (it && !form.name) form.name = `${props.artist.name} ${it.name}`
 }
 
-const twd = (v) =>
-  (Number(v.cost_amount || 0) * Number(v.exchange_rate || 1)).toFixed(2)
+function copyLastVariant() {
+  const last = form.variants[form.variants.length - 1]
+  form.variants.push({ ...last })
+}
+
+const rate = (v) => v.exchange_rate ?? (v.cost_currency === 'TWD' ? 1 : 0)
+const twd = (v) => ((v.cost_amount ?? 0) * rate(v)).toFixed(2)
 
 const canSubmit = computed(() => {
-  if (!form.item_type_id || !form.name) return false
-  if (form.is_bundle && !form.bundle_selection.some((b) => b.checked)) return false
-  return true
+  if (!form.name) return false
+  if (form.is_bundle) return form.bundle_selection.some((b) => b.checked)
+  return form.item_type_id != null
 })
 
 const submitting = ref(false)
@@ -81,7 +89,7 @@ async function submit() {
     await api.post('/products', {
       event_id: props.eventId,
       artist_id: props.artist.id,
-      item_type_id: form.item_type_id,
+      item_type_id: form.is_bundle ? null : form.item_type_id,
       name: form.name,
       price_twd: form.price_twd,
       vendor_id: form.vendor_id || null,
@@ -89,8 +97,20 @@ async function submit() {
       notes: form.notes || null,
       is_bundle: form.is_bundle,
       variants: form.is_bundle
-        ? [{ ...emptyVariant(), production_qty: form.variants[0].production_qty }]
-        : form.variants,
+        ? [{
+            variant_name: '單一規格',
+            production_qty: form.bundle_qty ?? 0,
+            cost_amount: 0,
+            cost_currency: 'TWD',
+            exchange_rate: 1,
+          }]
+        : form.variants.map((v) => ({
+            variant_name: v.variant_name?.trim() || '單一規格',
+            production_qty: v.production_qty ?? 0,
+            cost_amount: v.cost_amount ?? 0,
+            cost_currency: v.cost_currency,
+            exchange_rate: rate(v) || 1,
+          })),
       bundle_items: form.is_bundle
         ? form.bundle_selection
             .filter((b) => b.checked)
@@ -110,12 +130,14 @@ async function submit() {
   <el-dialog
     :model-value="modelValue"
     :title="`新增商品 — ${artist?.name ?? ''}`"
-    width="720px"
+    width="760px"
     @update:model-value="emit('update:modelValue', $event)"
   >
     <el-form label-width="100px">
-      <el-form-item label="品項類別" required>
+      <el-form-item :label="form.is_bundle ? '商品型態' : '品項類別'" required>
+        <!-- 套組是多種品項的組合，不屬於單一品項類別，所以不選 -->
         <el-select
+          v-if="!form.is_bundle"
           v-model="form.item_type_id"
           placeholder="選擇品項"
           style="width: 200px"
@@ -123,6 +145,7 @@ async function submit() {
         >
           <el-option v-for="t in itemTypes" :key="t.id" :label="t.name" :value="t.id" />
         </el-select>
+        <el-tag v-else type="success">套組（內容物可跨品項，不必選類別）</el-tag>
         <el-switch
           v-model="form.is_bundle"
           active-text="這是套組"
@@ -131,7 +154,10 @@ async function submit() {
       </el-form-item>
 
       <el-form-item label="商品名稱" required>
-        <el-input v-model="form.name" />
+        <el-input
+          v-model="form.name"
+          :placeholder="form.is_bundle ? '例：小貓全套組' : '選了品項會自動帶出，可修改'"
+        />
       </el-form-item>
 
       <el-form-item label="售價 (NT$)" required>
@@ -143,12 +169,18 @@ async function submit() {
         <el-form-item label="規格">
           <div style="width: 100%">
             <div v-for="(v, i) in form.variants" :key="i" class="variant-row">
-              <el-input v-model="v.variant_name" placeholder="規格名" style="width: 110px" />
-              <el-input-number
-                v-model="v.production_qty" :min="0" placeholder="製作量" style="width: 130px"
+              <el-input
+                v-model="v.variant_name"
+                placeholder="規格名（單一款可不填）"
+                style="width: 170px"
               />
               <el-input-number
-                v-model="v.cost_amount" :min="0" :precision="2" style="width: 130px"
+                v-model="v.production_qty" :min="0"
+                placeholder="製作量" style="width: 120px"
+              />
+              <el-input-number
+                v-model="v.cost_amount" :min="0" :precision="2"
+                placeholder="單位成本(原幣)" style="width: 150px"
               />
               <el-select v-model="v.cost_currency" style="width: 90px">
                 <el-option label="TWD" value="TWD" />
@@ -157,7 +189,8 @@ async function submit() {
               </el-select>
               <el-input-number
                 v-model="v.exchange_rate" :min="0.0001" :precision="4" :step="0.1"
-                style="width: 120px"
+                placeholder="匯率" style="width: 110px"
+                :disabled="v.cost_currency === 'TWD'"
               />
               <span class="hint">= NT${{ twd(v) }}</span>
               <el-button
@@ -165,20 +198,23 @@ async function submit() {
                 type="danger" link @click="form.variants.splice(i, 1)"
               >移除</el-button>
             </div>
-            <div class="hint" style="margin: 4px 0 8px">
-              欄位依序：規格名／製作量／單位成本(原幣)／幣別／匯率。單一款式不用動規格名。
-            </div>
-            <el-button size="small" @click="form.variants.push(emptyVariant())">
-              ＋ 加一個規格（如 S/M/L）
-            </el-button>
+            <el-space>
+              <el-button size="small" @click="form.variants.push(emptyVariant())">
+                ＋ 加一個空白規格
+              </el-button>
+              <el-button size="small" @click="copyLastVariant">
+                ⧉ 複製上一個規格
+              </el-button>
+            </el-space>
           </div>
         </el-form-item>
       </template>
 
       <template v-else>
         <el-form-item label="套組份數">
-          <el-input-number v-model="form.variants[0].production_qty" :min="0" />
-          <span class="hint">這個套組準備賣幾套</span>
+          <el-input-number
+            v-model="form.bundle_qty" :min="0" placeholder="準備賣幾套"
+          />
         </el-form-item>
         <el-form-item label="內容物">
           <div v-if="form.bundle_selection.length" style="width: 100%">
@@ -187,8 +223,11 @@ async function submit() {
               <el-input-number v-model="b.quantity" :min="1" :disabled="!b.checked" size="small" />
               <span class="hint">件/套</span>
             </div>
+            <div class="hint" style="margin-left: 0">
+              同一件單品可以被多個套組收錄，不衝突
+            </div>
           </div>
-          <div v-else class="hint">
+          <div v-else class="hint" style="margin-left: 0">
             這位藝人在此活動還沒有單品，先建立單品才能組成套組
           </div>
         </el-form-item>
