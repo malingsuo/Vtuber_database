@@ -194,6 +194,107 @@ class ProductOut(ORMBase):
     bundle_items: list[BundleItemOut]
 
 
+# ── 庫存異動 ──
+
+class MovementCreate(BaseModel):
+    variant_id: int
+    movement_type: Literal[
+        "inbound", "sale", "sale_return", "pr_gift", "scrap", "adjustment"
+    ]
+    quantity: int  # 正數；盤點調整可正（盤盈）可負（盤虧）
+    movement_date: date
+    channel: Literal["preorder", "onsite", "online"] | None = None  # 銷售型必填
+    sale_price_twd: Decimal | None = None  # 不填用商品定價
+    sold_out_today: bool | None = None
+    recipient: str | None = None  # 轉公關必填
+    purpose: str | None = None
+    notes: str | None = None
+
+    @model_validator(mode="after")
+    def check(self) -> "MovementCreate":
+        if self.movement_type == "adjustment":
+            if self.quantity == 0:
+                raise ValueError("盤點調整數量不可為 0")
+        elif self.quantity <= 0:
+            raise ValueError("數量必須為正數")
+        if self.movement_type == "sale" and self.channel is None:
+            raise ValueError("銷售必須指定通路")
+        if self.movement_type == "pr_gift" and not self.recipient:
+            raise ValueError("轉公關品請填寫對象")
+        return self
+
+
+class MovementOut(ORMBase):
+    id: int
+    variant_id: int
+    movement_type: str
+    quantity_delta: int
+    movement_date: date
+    channel: str | None
+    sale_price_twd: Decimal | None
+    sold_out_today: bool | None
+    recipient: str | None
+    purpose: str | None
+    source: str
+    notes: str | None
+
+
+class StockOut(BaseModel):
+    variant_id: int
+    physical: int   # 實體庫存（流水帳加總）
+    reserved: int   # 圈存量（未出貨的預購）
+    available: int  # 可售 = 實體 − 圈存
+
+
+class DailySaleItem(BaseModel):
+    variant_id: int
+    quantity: int = Field(gt=0)
+    sale_price_twd: Decimal | None = None
+    sold_out_today: bool = False
+
+
+class DailySalesCreate(BaseModel):
+    """逐日銷售輸入：收攤後一次填整場的當日銷量。"""
+
+    movement_date: date
+    channel: Literal["onsite", "online"]
+    items: list[DailySaleItem] = Field(min_length=1)
+
+
+# ── 預購 ──
+
+class PreorderCreate(BaseModel):
+    variant_id: int
+    quantity: int = Field(gt=0)
+    created_date: date
+    notes: str | None = None
+
+
+class PreorderOut(ORMBase):
+    id: int
+    variant_id: int
+    quantity: int
+    created_date: date
+    status: str
+    status_changed_date: date | None
+    notes: str | None
+
+
+class PreorderShip(BaseModel):
+    ship_date: date
+    sale_price_twd: Decimal | None = None
+
+
+class PreorderCancel(BaseModel):
+    cancel_date: date
+
+
+class PreorderShipAll(BaseModel):
+    variant_id: int
+    ship_date: date
+    sale_price_twd: Decimal | None = None
+
+
 # ── 查詢流程：活動總覽（依藝人分組 + 銷售統計）──
 
 class VariantStats(BaseModel):
@@ -203,6 +304,8 @@ class VariantStats(BaseModel):
     cost_twd: Decimal
     sold_qty: int       # 淨售出（銷售 − 銷售退回）
     stock_qty: int      # 目前實體庫存（流水帳加總）
+    reserved_qty: int   # 圈存量（未出貨的預購）
+    available_qty: int  # 可售 = 實體 − 圈存
     revenue_twd: Decimal
 
 

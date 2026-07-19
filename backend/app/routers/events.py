@@ -12,6 +12,8 @@ from app.models import (
     Event,
     InventoryMovement,
     MovementType,
+    Preorder,
+    PreorderStatus,
     Product,
     ProductVariant,
 )
@@ -140,6 +142,19 @@ def event_overview(
         ).all()
         stats = {r[0]: (int(r[1]), int(r[2]), Decimal(r[3] or 0)) for r in rows}
 
+    # 圈存量（未出貨預購）：一次查完
+    reserved_map: dict[int, int] = {}
+    if variant_ids:
+        reserved_rows = db.execute(
+            select(Preorder.variant_id, func.sum(Preorder.quantity))
+            .where(
+                Preorder.variant_id.in_(variant_ids),
+                Preorder.status == PreorderStatus.RESERVED.value,
+            )
+            .group_by(Preorder.variant_id)
+        ).all()
+        reserved_map = {r[0]: int(r[1]) for r in reserved_rows}
+
     # 套組內容物：一次查完，組成「商品名（規格）× 數量」
     bundle_ids = [p.id for p in products if p.is_bundle]
     contents_map: dict[int, list[schemas.BundleContent]] = {}
@@ -187,6 +202,9 @@ def event_overview(
                         cost_twd=v.cost_twd,
                         stock_qty=stats.get(v.id, (0, 0, Decimal(0)))[0],
                         sold_qty=stats.get(v.id, (0, 0, Decimal(0)))[1],
+                        reserved_qty=reserved_map.get(v.id, 0),
+                        available_qty=stats.get(v.id, (0, 0, Decimal(0)))[0]
+                        - reserved_map.get(v.id, 0),
                         revenue_twd=stats.get(v.id, (0, 0, Decimal(0)))[2],
                     )
                     for v in product.variants

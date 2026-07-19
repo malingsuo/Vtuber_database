@@ -1,7 +1,15 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import artists, events, item_types, products, vendors
+from app.routers import (
+    artists,
+    events,
+    inventory,
+    item_types,
+    preorders,
+    products,
+    vendors,
+)
 
 app = FastAPI(
     title="VTuber 週邊管理系統",
@@ -18,7 +26,8 @@ app.add_middleware(
 )
 
 for router in (artists.router, events.router, item_types.router,
-               vendors.router, products.router):
+               vendors.router, products.router,
+               inventory.router, preorders.router):
     app.include_router(router, prefix="/api")
 
 

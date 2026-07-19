@@ -4,6 +4,8 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api.js'
 import ProductFormDialog from '../components/ProductFormDialog.vue'
+import DailySalesDialog from '../components/DailySalesDialog.vue'
+import InventoryDrawer from '../components/InventoryDrawer.vue'
 
 const route = useRoute()
 const eventId = Number(route.params.id)
@@ -39,6 +41,7 @@ onMounted(load)
 function rows(block) {
   return block.products.flatMap((p) =>
     p.variants.map((v) => ({
+      variant_id: v.id,
       product: p.name,
       is_bundle: p.is_bundle,
       bundle_contents: p.bundle_contents ?? [],
@@ -48,6 +51,8 @@ function rows(block) {
       production: v.production_qty,
       sold: v.sold_qty,
       stock: v.stock_qty,
+      reserved: v.reserved_qty,
+      available: v.available_qty,
       revenue: Number(v.revenue_twd),
     })),
   )
@@ -98,6 +103,36 @@ function addForNewArtist() {
 }
 
 const nt = (n) => `NT$ ${Math.round(n).toLocaleString()}`
+
+// ── 逐日銷售輸入 ──
+const dailyOpen = ref(false)
+
+const allVariantsFlat = computed(() =>
+  (overview.value?.artists ?? []).flatMap((b) =>
+    b.products.flatMap((p) =>
+      p.variants.map((v) => ({
+        id: v.id,
+        label: `${b.artist.name}｜${p.name}（${v.variant_name}）`,
+        price: Number(p.price_twd),
+        available: v.available_qty,
+      })),
+    ),
+  ),
+)
+
+// ── 庫存管理抽屜（點商品列開啟）──
+const drawerOpen = ref(false)
+const drawerVariant = ref(null)
+
+function onRowClick(row) {
+  const found = allVariantsFlat.value.find((v) => v.id === row.variant_id)
+  drawerVariant.value = {
+    id: row.variant_id,
+    label: found?.label ?? row.product,
+    price: row.price,
+  }
+  drawerOpen.value = true
+}
 
 // ── 刪除商品 ──
 const deleteProductId = ref(null)
@@ -163,6 +198,11 @@ async function confirmDelete() {
             預購 {{ overview.event.preorder_start }} ～ {{ overview.event.preorder_end }}
           </el-tag>
         </template>
+        <el-button
+          type="success" size="small" :disabled="!allVariantsFlat.length"
+          @click="dailyOpen = true"
+        >逐日銷售輸入</el-button>
+        <span style="font-size: 12px">點任一商品列可管理庫存與預購</span>
       </p>
 
       <el-card v-for="block in overview.artists" :key="block.artist.id" class="artist-card">
@@ -185,7 +225,10 @@ async function confirmDelete() {
           </div>
         </template>
 
-        <el-table :data="rows(block)" size="small">
+        <el-table
+          :data="rows(block)" size="small"
+          style="cursor: pointer" @row-click="onRowClick"
+        >
           <el-table-column label="商品" min-width="180">
             <template #default="{ row }">
               {{ row.product }}
@@ -208,14 +251,22 @@ async function confirmDelete() {
           <el-table-column label="成本" width="90" align="right">
             <template #default="{ row }">{{ row.cost.toLocaleString() }}</template>
           </el-table-column>
-          <el-table-column prop="production" label="製作量" width="90" align="right" />
-          <el-table-column prop="sold" label="售出" width="80" align="right" />
-          <el-table-column label="庫存" width="80" align="right">
+          <el-table-column prop="production" label="製作量" width="80" align="right" />
+          <el-table-column prop="sold" label="售出" width="70" align="right" />
+          <el-table-column label="庫存" width="70" align="right">
             <template #default="{ row }">
               <span :class="{ soldout: row.stock === 0 }">{{ row.stock }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="營收" width="110" align="right">
+          <el-table-column label="圈存" width="70" align="right">
+            <template #default="{ row }">
+              <span :style="{ color: row.reserved ? '#e6a23c' : undefined }">
+                {{ row.reserved }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="available" label="可售" width="70" align="right" />
+          <el-table-column label="營收" width="100" align="right">
             <template #default="{ row }">{{ row.revenue.toLocaleString() }}</template>
           </el-table-column>
         </el-table>
@@ -264,6 +315,19 @@ async function confirmDelete() {
         :vendors="vendors"
         :artist-variants="dialogArtistVariants"
         @saved="load"
+      />
+
+      <DailySalesDialog
+        v-model="dailyOpen"
+        :variants="allVariantsFlat"
+        :default-channel="overview.event.event_type === 'online' ? 'online' : 'onsite'"
+        @saved="load"
+      />
+
+      <InventoryDrawer
+        v-model="drawerOpen"
+        :variant="drawerVariant"
+        @changed="load"
       />
     </template>
   </div>
