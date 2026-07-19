@@ -15,6 +15,7 @@ from app.models import (
     Preorder,
     Product,
     ProductVariant,
+    Vendor,
 )
 
 router = APIRouter(prefix="/products", tags=["商品"])
@@ -34,6 +35,25 @@ def _load(db: Session, cid: int, product_id: int) -> Product:
     return product
 
 
+def _check_optional_refs(
+    db: Session, cid: int,
+    vendor_id: int | None = None,
+    restock_source_id: int | None = None,
+) -> None:
+    """選填引用的公司歸屬驗證（交接文件漏洞 B）：
+    廠商與再販來源不可指向別家公司的資料。Create 與 Update 都要過這關。"""
+    if vendor_id is not None and not db.scalar(
+        select(Vendor.id).where(Vendor.id == vendor_id, Vendor.company_id == cid)
+    ):
+        raise HTTPException(422, f"找不到指定的廠商（id={vendor_id}）")
+    if restock_source_id is not None and not db.scalar(
+        select(Product.id).where(
+            Product.id == restock_source_id, Product.company_id == cid
+        )
+    ):
+        raise HTTPException(422, f"找不到指定的再販來源商品（id={restock_source_id}）")
+
+
 def _check_fk(db: Session, cid: int, body: schemas.ProductCreate) -> None:
     """確認關聯對象都存在且屬於同一公司，錯誤訊息比資料庫外鍵錯誤友善。"""
     checks = [
@@ -47,6 +67,7 @@ def _check_fk(db: Session, cid: int, body: schemas.ProductCreate) -> None:
             select(model.id).where(model.id == ref_id, model.company_id == cid)
         ):
             raise HTTPException(422, f"找不到指定的{label}（id={ref_id}）")
+    _check_optional_refs(db, cid, body.vendor_id, body.restock_source_id)
 
 
 @router.get("", response_model=list[schemas.ProductOut])
@@ -178,7 +199,11 @@ def update_product(
     cid: int = Depends(get_company_id),
 ):
     product = _load(db, cid, product_id)
-    for key, value in body.model_dump(exclude_unset=True).items():
+    data = body.model_dump(exclude_unset=True)
+    _check_optional_refs(
+        db, cid, data.get("vendor_id"), data.get("restock_source_id")
+    )
+    for key, value in data.items():
         setattr(product, key, value)
     db.commit()
     return _load(db, cid, product_id)

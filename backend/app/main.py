@@ -1,10 +1,13 @@
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
+from slowapi.errors import RateLimitExceeded
+
 from app.auth import decode_token
 from app.db import SessionLocal
 from app.deps import authorize
 from app.models import AuditLog
+from app.rate_limit import limiter, rate_limit_handler
 from app.config import settings
 from app.routers import (
     admin,
@@ -29,6 +32,9 @@ app = FastAPI(
     description="週邊商品的銷售紀錄、庫存管理與訂量預測",
     version="0.1.0",
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_handler)
 
 app.add_middleware(
     CORSMiddleware,

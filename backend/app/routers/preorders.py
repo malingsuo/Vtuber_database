@@ -121,6 +121,56 @@ def cancel_preorder(
     return preorder
 
 
+@router.post("/{preorder_id}/unship", response_model=schemas.PreorderOut)
+def unship_preorder(
+    preorder_id: int,
+    db: Session = Depends(get_db),
+    cid: int = Depends(get_company_id),
+):
+    """出貨退回圈存：帳（出貨異動）與約（預購狀態）在同一交易內一起還原。
+
+    這是「刪除預購出貨異動造成帳約脫鉤」的正規替代做法（交接文件 1.3）。
+    """
+    preorder = _get_or_404(db, cid, preorder_id)
+    # 鎖定順序與全系統一致：先規格、後預購
+    get_variant(db, cid, preorder.variant_id, for_update=True)
+    preorder = _get_or_404(db, cid, preorder_id, for_update=True)
+    if preorder.status != PreorderStatus.SHIPPED.value:
+        raise HTTPException(409, "只有已出貨的預購可以退回圈存")
+
+    # 找對應的出貨異動：同規格、預購通路、同數量；優先比對出貨日
+    def find_movement(with_date: bool):
+        stmt = (
+            select(InventoryMovement)
+            .where(
+                InventoryMovement.company_id == cid,
+                InventoryMovement.variant_id == preorder.variant_id,
+                InventoryMovement.movement_type == MovementType.SALE.value,
+                InventoryMovement.channel == "preorder",
+                InventoryMovement.quantity_delta == -preorder.quantity,
+            )
+            .order_by(InventoryMovement.id.desc())
+            .limit(1)
+        )
+        if with_date and preorder.status_changed_date is not None:
+            stmt = stmt.where(
+                InventoryMovement.movement_date == preorder.status_changed_date
+            )
+        return db.scalar(stmt)
+
+    movement = find_movement(with_date=True) or find_movement(with_date=False)
+    if movement is None:
+        raise HTTPException(
+            409, "找不到對應的出貨異動（可能已被刪除），請由管理者手動核帳"
+        )
+
+    db.delete(movement)  # 庫存加回來
+    preorder.status = PreorderStatus.RESERVED.value  # 圈存恢復
+    preorder.status_changed_date = None
+    db.commit()  # 同一交易：要嘛全成，要嘛全不動
+    return preorder
+
+
 @router.post("/ship-all", status_code=201)
 def ship_all(
     body: schemas.PreorderShipAll,

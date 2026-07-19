@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -6,12 +6,14 @@ from app import schemas
 from app.auth import create_token, hash_password, verify_password
 from app.deps import get_current_user, get_db, require_admin
 from app.models import AuditLog, Company, User
+from app.rate_limit import limiter
 
 router = APIRouter(prefix="/auth", tags=["登入與使用者"])
 
 
 @router.post("/login", response_model=schemas.TokenOut)
-def login(body: schemas.LoginIn, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")  # 防暴力猜密碼；429 訊息見 rate_limit.py
+def login(request: Request, body: schemas.LoginIn, db: Session = Depends(get_db)):
     user = db.scalar(select(User).where(User.username == body.username))
     if user is None or not verify_password(body.password, user.password_hash):
         raise HTTPException(401, "帳號或密碼錯誤")
