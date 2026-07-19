@@ -297,6 +297,71 @@ class PreorderShipAll(BaseModel):
     sale_price_twd: Decimal | None = None
 
 
+# ── 檔期開支 ──
+
+class ExpenseCreate(BaseModel):
+    event_id: int
+    category: Literal["booth", "shipping", "labor", "other"]
+    amount_twd: Decimal = Field(gt=0)
+    artist_id: int | None = None  # 可歸屬特定藝人（選填）
+    notes: str | None = None
+
+
+class ExpenseOut(ORMBase):
+    id: int
+    event_id: int
+    category: str
+    amount_twd: Decimal
+    artist_id: int | None
+    notes: str | None
+
+
+# ── 報表 ──
+
+class ReportRow(BaseModel):
+    """一列彙總（依藝人或依品項）。"""
+
+    id: int | None  # 套組列的品項 id 為 None
+    name: str
+    production: int
+    sold: int
+    revenue: Decimal
+    cogs: Decimal      # 銷貨成本 = 售出 × 單位成本
+    gross: Decimal     # 毛利 = 營收 − 銷貨成本
+    sell_through: float  # 銷售率 = 售出 / 製作量
+
+
+class EventReport(BaseModel):
+    event: "EventOut"
+    production: int
+    sold: int
+    sell_through: float
+    revenue: Decimal
+    cogs: Decimal
+    gross: Decimal
+    pr_qty: int          # 公關品件數
+    pr_cost: Decimal     # 公關成本（以商品成本計）
+    expenses: list[ExpenseOut]
+    expenses_total: Decimal
+    net: Decimal         # 淨利 = 毛利 − 檔期開支 − 公關成本
+    by_artist: list[ReportRow]
+    by_item_type: list[ReportRow]
+
+
+class SummaryRow(BaseModel):
+    """跨活動彙總（藝人或品項），可用年份過濾。"""
+
+    id: int
+    name: str
+    event_count: int
+    production: int
+    sold: int
+    revenue: Decimal
+    cogs: Decimal
+    gross: Decimal
+    sell_through: float
+
+
 # ── 查詢流程：活動總覽（依藝人分組 + 銷售統計）──
 
 class VariantStats(BaseModel):

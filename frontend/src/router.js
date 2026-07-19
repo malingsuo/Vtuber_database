@@ -4,6 +4,7 @@ const routes = [
   { path: '/', component: () => import('./views/QueryView.vue') },
   { path: '/events/new', component: () => import('./views/NewEventView.vue') },
   { path: '/events/:id', component: () => import('./views/EventDetailView.vue') },
+  { path: '/reports', component: () => import('./views/ReportView.vue') },
   { path: '/settings', component: () => import('./views/SettingsView.vue') },
 ]
 

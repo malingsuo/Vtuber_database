@@ -4,10 +4,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.routers import (
     artists,
     events,
+    expenses,
     inventory,
     item_types,
     preorders,
     products,
+    reports,
     vendors,
 )
 
@@ -27,7 +29,8 @@ app.add_middleware(
 
 for router in (artists.router, events.router, item_types.router,
                vendors.router, products.router,
-               inventory.router, preorders.router):
+               inventory.router, preorders.router,
+               expenses.router, reports.router):
     app.include_router(router, prefix="/api")
 
 

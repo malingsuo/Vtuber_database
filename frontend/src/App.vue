@@ -11,6 +11,7 @@ const route = useRoute()
       <el-menu mode="horizontal" :default-active="route.path" router :ellipsis="false">
         <el-menu-item index="/">查詢活動</el-menu-item>
         <el-menu-item index="/events/new">新建活動</el-menu-item>
+        <el-menu-item index="/reports">報表</el-menu-item>
         <el-menu-item index="/settings">設定</el-menu-item>
       </el-menu>
     </el-header>
