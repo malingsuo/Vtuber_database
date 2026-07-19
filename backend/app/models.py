@@ -64,7 +64,8 @@ class RecordSource(str, enum.Enum):
 
 
 class UserRole(str, enum.Enum):
-    ADMIN = "admin"    # 管理者
+    SUPERADMIN = "superadmin"  # 總管理員：管公司開通/停用，不碰各公司業務資料
+    ADMIN = "admin"    # 公司管理者
     EDITOR = "editor"  # 輸入者
     VIEWER = "viewer"  # 唯讀
 
@@ -90,6 +91,7 @@ class Company(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)  # 停用即全公司無法登入
 
 
 class CompanyMixin:

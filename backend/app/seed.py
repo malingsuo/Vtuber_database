@@ -92,6 +92,20 @@ def main() -> None:
     if session.scalar(select(func.count()).select_from(Company)):
         raise SystemExit("資料庫已有資料，拒絕重複灌入。要重灌請先刪除 dev.db 再跑 migration。")
 
+    # 平台總部：總管理員所屬，只管公司開通，不放業務資料
+    platform = Company(name="平台總部")
+    session.add(platform)
+    session.flush()
+    session.add(
+        User(
+            company_id=platform.id,
+            username="superadmin",
+            password_hash=hash_password("super123"),
+            display_name="總管理員",
+            role=UserRole.SUPERADMIN.value,
+        )
+    )
+
     company = Company(name="示範娛樂")
     session.add(company)
     session.flush()

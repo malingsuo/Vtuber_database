@@ -54,6 +54,26 @@ class ChangePasswordIn(BaseModel):
     new_password: str = Field(min_length=6)
 
 
+# ── 公司管理（僅總管理員）──
+
+class CompanyCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    admin_username: str = Field(min_length=3, max_length=50)  # 該公司的小管理員
+    admin_password: str = Field(min_length=6)
+    admin_display_name: str | None = None
+
+
+class CompanyUpdate(BaseModel):
+    is_active: bool
+
+
+class CompanyOut(ORMBase):
+    id: int
+    name: str
+    is_active: bool
+    user_count: int = 0
+
+
 # ── 藝人 ──
 
 class ArtistCreate(BaseModel):

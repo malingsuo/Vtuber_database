@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import decode_token
 from app.db import SessionLocal
-from app.models import User, UserRole
+from app.models import Company, User, UserRole
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -26,6 +26,9 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     user = db.get(User, int(payload["sub"]))
     if user is None or not user.is_active:
         raise HTTPException(401, "帳號不存在或已停用")
+    company = db.get(Company, user.company_id)
+    if company is None or not company.is_active:
+        raise HTTPException(403, "貴公司的服務已停用，請聯絡平台管理員")
     return user
 
 
@@ -37,8 +40,14 @@ def authorize(request: Request, user: User = Depends(get_current_user)) -> User:
 
 
 def require_admin(user: User = Depends(get_current_user)) -> User:
-    if user.role != UserRole.ADMIN.value:
+    if user.role not in (UserRole.ADMIN.value, UserRole.SUPERADMIN.value):
         raise HTTPException(403, "此操作僅限管理者")
+    return user
+
+
+def require_superadmin(user: User = Depends(get_current_user)) -> User:
+    if user.role != UserRole.SUPERADMIN.value:
+        raise HTTPException(403, "此操作僅限總管理員")
     return user
 
 

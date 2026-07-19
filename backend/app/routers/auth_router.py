@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app import schemas
 from app.auth import create_token, hash_password, verify_password
 from app.deps import get_current_user, get_db, require_admin
-from app.models import AuditLog, User
+from app.models import AuditLog, Company, User
 
 router = APIRouter(prefix="/auth", tags=["登入與使用者"])
 
@@ -17,6 +17,9 @@ def login(body: schemas.LoginIn, db: Session = Depends(get_db)):
         raise HTTPException(401, "帳號或密碼錯誤")
     if not user.is_active:
         raise HTTPException(403, "帳號已停用，請聯絡管理者")
+    company = db.get(Company, user.company_id)
+    if company is None or not company.is_active:
+        raise HTTPException(403, "貴公司的服務已停用，請聯絡平台管理員")
     db.add(
         AuditLog(
             company_id=user.company_id,

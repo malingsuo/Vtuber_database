@@ -2,9 +2,12 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api.js'
-import { ROLE_LABEL, session } from '../session.js'
+import { COMPANY_ROLES, ROLE_LABEL, session } from '../session.js'
 
-const isAdmin = computed(() => session.user?.role === 'admin')
+const isAdmin = computed(() =>
+  ['admin', 'superadmin'].includes(session.user?.role),
+)
+const isSuperAdmin = computed(() => session.user?.role === 'superadmin')
 
 // ── 刪除商品確認方式（存瀏覽器 localStorage，預設開啟）──
 const confirmByName = ref(localStorage.getItem('delete_confirm_by_name') !== 'false')
@@ -20,7 +23,55 @@ async function loadItemTypes() {
 onMounted(() => {
   loadItemTypes()
   if (isAdmin.value) loadUsers()
+  if (isSuperAdmin.value) loadCompanies()
 })
+
+// ── 公司管理（僅總管理員）──
+const companies = ref([])
+const newCompany = reactive({
+  name: '', admin_username: '', admin_password: '', admin_display_name: '',
+})
+
+async function loadCompanies() {
+  const { data } = await api.get('/admin/companies')
+  companies.value = data
+}
+
+async function createCompany() {
+  if (!newCompany.name || newCompany.admin_username.length < 3
+      || newCompany.admin_password.length < 6) {
+    ElMessage.warning('公司名稱必填；管理員帳號至少 3 碼、密碼至少 6 碼')
+    return
+  }
+  await api.post('/admin/companies', {
+    name: newCompany.name,
+    admin_username: newCompany.admin_username,
+    admin_password: newCompany.admin_password,
+    admin_display_name: newCompany.admin_display_name || null,
+  })
+  ElMessage.success(`公司「${newCompany.name}」已開通，把帳密交給對方吧`)
+  Object.assign(newCompany, {
+    name: '', admin_username: '', admin_password: '', admin_display_name: '',
+  })
+  loadCompanies()
+}
+
+async function toggleCompany(c, active) {
+  if (!active) {
+    try {
+      await ElMessageBox.confirm(
+        `停用「${c.name}」後，該公司所有帳號將立即無法使用系統。確定？`,
+        '停用公司',
+        { confirmButtonText: '停用', cancelButtonText: '取消', type: 'warning' },
+      )
+    } catch {
+      return
+    }
+  }
+  await api.put(`/admin/companies/${c.id}`, { is_active: active })
+  ElMessage.success(active ? '已恢復' : '已停用')
+  loadCompanies()
+}
 
 // ── 修改自己的密碼 ──
 const pwForm = reactive({ old_password: '', new_password: '' })
@@ -206,7 +257,7 @@ async function deleteItemType(t) {
         <el-input v-model="newUser.display_name" placeholder="顯示名稱" style="width: 120px" />
         <el-select v-model="newUser.role" style="width: 100px">
           <el-option
-            v-for="(label, key) in ROLE_LABEL" :key="key" :label="label" :value="key"
+            v-for="(label, key) in COMPANY_ROLES" :key="key" :label="label" :value="key"
           />
         </el-select>
         <el-button type="primary" @click="createUser">建立</el-button>
@@ -217,14 +268,16 @@ async function deleteItemType(t) {
         <el-table-column label="角色" width="120">
           <template #default="{ row }">
             <el-select
+              v-if="row.role !== 'superadmin'"
               :model-value="row.role" size="small"
               :disabled="row.id === session.user.id"
               @update:model-value="(v) => updateUser(row, { role: v })"
             >
               <el-option
-                v-for="(label, key) in ROLE_LABEL" :key="key" :label="label" :value="key"
+                v-for="(label, key) in COMPANY_ROLES" :key="key" :label="label" :value="key"
               />
             </el-select>
+            <el-tag v-else size="small">總管理員</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="啟用" width="80" align="center">
@@ -243,6 +296,43 @@ async function deleteItemType(t) {
         </el-table-column>
       </el-table>
       <div class="hint">角色權限：管理者＝全功能；輸入者＝可輸入資料；唯讀＝只能看</div>
+    </el-card>
+
+    <el-card v-if="isSuperAdmin" style="margin-top: 16px">
+      <template #header>公司管理（僅總管理員可見）</template>
+      <el-space wrap style="margin-bottom: 12px">
+        <el-input v-model="newCompany.name" placeholder="公司名稱" style="width: 140px" />
+        <el-input
+          v-model="newCompany.admin_username" placeholder="小管理員帳號" style="width: 130px"
+        />
+        <el-input
+          v-model="newCompany.admin_password" type="password" show-password
+          placeholder="小管理員密碼" style="width: 140px"
+        />
+        <el-input
+          v-model="newCompany.admin_display_name" placeholder="顯示名稱（選填）"
+          style="width: 130px"
+        />
+        <el-button type="primary" @click="createCompany">開通公司</el-button>
+      </el-space>
+      <el-table :data="companies" size="small">
+        <el-table-column prop="id" label="ID" width="60" />
+        <el-table-column prop="name" label="公司名稱" min-width="150" />
+        <el-table-column prop="user_count" label="帳號數" width="90" align="right" />
+        <el-table-column label="啟用" width="90" align="center">
+          <template #default="{ row }">
+            <el-switch
+              :model-value="row.is_active"
+              @update:model-value="(v) => toggleCompany(row, v)"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column />
+      </el-table>
+      <div class="hint">
+        開通公司會同時建立該公司的小管理員帳號，之後該公司自行管理自己的使用者；
+        總管理員看不到各公司的業務資料
+      </div>
     </el-card>
   </div>
 </template>

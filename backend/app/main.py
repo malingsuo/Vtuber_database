@@ -5,7 +5,9 @@ from app.auth import decode_token
 from app.db import SessionLocal
 from app.deps import authorize
 from app.models import AuditLog
+from app.config import settings
 from app.routers import (
+    admin,
     artists,
     auth_router,
     events,
@@ -25,10 +27,9 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# 前端（Vue dev server）跑在 5173 埠；上線部署時再收斂
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -66,6 +67,7 @@ async def audit_log(request: Request, call_next):
 
 # 登入路由不設權限；業務路由一律要登入，且唯讀角色擋寫入
 app.include_router(auth_router.router, prefix="/api")
+app.include_router(admin.router, prefix="/api")  # 內部自帶總管理員檢查
 for router in (artists.router, events.router, item_types.router,
                vendors.router, products.router,
                inventory.router, preorders.router,

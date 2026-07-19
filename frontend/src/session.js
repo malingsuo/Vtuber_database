@@ -18,4 +18,12 @@ export function clearSession() {
   session.user = null
 }
 
-export const ROLE_LABEL = { admin: '管理者', editor: '輸入者', viewer: '唯讀' }
+export const ROLE_LABEL = {
+  superadmin: '總管理員',
+  admin: '管理者',
+  editor: '輸入者',
+  viewer: '唯讀',
+}
+
+// 公司內可指派的角色（總管理員不在此列——只能由平台端建立）
+export const COMPANY_ROLES = { admin: '管理者', editor: '輸入者', viewer: '唯讀' }

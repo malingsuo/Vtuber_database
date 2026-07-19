@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     secret_key: str = "dev-only-secret-change-me-in-production"
     token_expire_hours: int = 72
 
+    # 允許的前端來源，逗號分隔。正式部署時前端由 nginx 同源代理，通常不用改
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 
