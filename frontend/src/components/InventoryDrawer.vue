@@ -1,6 +1,6 @@
 <script setup>
 import { reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api.js'
 
 const props = defineProps({
@@ -69,6 +69,47 @@ async function submitMovement() {
     ElMessage.warning('請填數量')
     return
   }
+  // 這筆異動會讓可售變負（吃到圈存的貨）時，先提醒再寫入
+  const SIGNS = { inbound: 1, sale_return: 1, pr_gift: -1, scrap: -1 }
+  const delta =
+    moveForm.movement_type === 'adjustment'
+      ? moveForm.quantity
+      : SIGNS[moveForm.movement_type] * moveForm.quantity
+  if (delta < 0 && stock.value.available + delta < 0) {
+    try {
+      await ElMessageBox.confirm(
+        `目前還有 ${stock.value.reserved} 件圈存中的預購未出貨。` +
+          `這個操作後可售庫存會變成 ${stock.value.available + delta}，` +
+          `到時可能不夠出貨給預購客人。確定要繼續嗎？`,
+        '注意：即將動用圈存的貨',
+        { confirmButtonText: '仍要寫入', cancelButtonText: '取消', type: 'warning' },
+      )
+    } catch {
+      return
+    }
+  }
+  // 累計入庫超過製作量：要求填寫原因才放行（後端也會擋）
+  const excess =
+    moveForm.movement_type === 'inbound'
+      ? stock.value.inbound_qty + moveForm.quantity - stock.value.production_qty
+      : 0
+  if (excess > 0 && !moveForm.notes.trim()) {
+    try {
+      const { value } = await ElMessageBox.prompt(
+        `已入庫 ${stock.value.inbound_qty}／製作量 ${stock.value.production_qty}，` +
+          `這次再入 ${moveForm.quantity} 件，累計將超量 ${excess} 件。請填寫超量原因：`,
+        '入庫超過製作量',
+        {
+          confirmButtonText: '寫入',
+          cancelButtonText: '取消',
+          inputValidator: (v) => !!v?.trim() || '必須填寫原因',
+        },
+      )
+      moveForm.notes = `超量 ${excess} 件｜原因：${value.trim()}`
+    } catch {
+      return
+    }
+  }
   savingMove.value = true
   try {
     await api.post('/inventory/movements', {
@@ -134,10 +175,33 @@ async function shipAll() {
   emit('changed')
 }
 
+// TODO 帳號權限里程碑：刪除明細改為限管理者、輸入密碼確認
+async function deleteMovement(m) {
+  const desc = `${m.movement_date}｜${TYPE_LABEL[m.movement_type]}｜` +
+    `${m.quantity_delta > 0 ? '+' : ''}${m.quantity_delta}`
+  let msg = `確定刪除這筆異動明細嗎？\n${desc}`
+  if (m.channel === 'preorder') {
+    msg += '\n注意：這是預購出貨產生的紀錄，刪除後預購狀態不會自動變回圈存'
+  }
+  try {
+    await ElMessageBox.confirm(msg, '刪除異動明細', {
+      confirmButtonText: '刪除',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  await api.delete(`/inventory/movements/${m.id}`)
+  ElMessage.success('已刪除')
+  await load()
+  emit('changed')
+}
+
 function movementText(m) {
   const parts = []
   if (m.channel) parts.push(CHANNEL_LABEL[m.channel])
-  if (m.sale_price_twd != null) parts.push(`@${Number(m.sale_price_twd)}`)
+  if (m.sale_price_twd != null) parts.push(`單價 NT$${Number(m.sale_price_twd)}`)
   if (m.sold_out_today) parts.push('當日完售')
   if (m.recipient) parts.push(`對象:${m.recipient}`)
   if (m.purpose) parts.push(m.purpose)
@@ -159,6 +223,15 @@ function movementText(m) {
         <el-col :span="8"><el-statistic title="圈存（預購未出貨）" :value="stock.reserved" /></el-col>
         <el-col :span="8"><el-statistic title="可售" :value="stock.available" /></el-col>
       </el-row>
+      <div class="hint" style="text-align: center">
+        製作量 {{ stock.production_qty }}｜累計入庫 {{ stock.inbound_qty }}
+        <span
+          v-if="stock.inbound_qty > stock.production_qty"
+          style="color: #e6a23c; font-weight: bold"
+        >
+          ｜超額 {{ stock.inbound_qty - stock.production_qty }} 件
+        </span>
+      </div>
 
       <el-divider content-position="left">新增庫存異動</el-divider>
       <el-space wrap>
@@ -192,6 +265,9 @@ function movementText(m) {
       </div>
       <div v-if="moveForm.movement_type === 'adjustment'" class="hint">
         盤點調整：盤盈填正數、盤虧填負數（例：-3）
+      </div>
+      <div class="hint">
+        銷售不在這裡輸入——現場/通販請用活動頁的「逐日銷售輸入」，預購出貨在下方預購區
       </div>
 
       <el-divider content-position="left">預購圈存</el-divider>
@@ -242,6 +318,13 @@ function movementText(m) {
         </el-table-column>
         <el-table-column label="明細" min-width="160">
           <template #default="{ row }">{{ movementText(row) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="60" align="center">
+          <template #default="{ row }">
+            <el-button type="danger" link size="small" @click="deleteMovement(row)">
+              刪除
+            </el-button>
+          </template>
         </el-table-column>
       </el-table>
     </template>

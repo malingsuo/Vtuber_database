@@ -241,9 +241,11 @@ class MovementOut(ORMBase):
 
 class StockOut(BaseModel):
     variant_id: int
-    physical: int   # 實體庫存（流水帳加總）
-    reserved: int   # 圈存量（未出貨的預購）
-    available: int  # 可售 = 實體 − 圈存
+    physical: int        # 實體庫存（流水帳加總）
+    reserved: int        # 圈存量（未出貨的預購）
+    available: int       # 可售 = 實體 − 圈存
+    production_qty: int  # 製作量（計畫數）
+    inbound_qty: int     # 累計入庫量
 
 
 class DailySaleItem(BaseModel):

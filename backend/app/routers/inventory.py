@@ -49,6 +49,17 @@ def physical_stock(db: Session, variant_id: int) -> int:
     )
 
 
+def inbound_total(db: Session, variant_id: int) -> int:
+    return int(
+        db.scalar(
+            select(func.coalesce(func.sum(InventoryMovement.quantity_delta), 0)).where(
+                InventoryMovement.variant_id == variant_id,
+                InventoryMovement.movement_type == MovementType.INBOUND.value,
+            )
+        )
+    )
+
+
 def reserved_qty(db: Session, variant_id: int) -> int:
     return int(
         db.scalar(
@@ -70,7 +81,7 @@ def get_stock(
     db: Session = Depends(get_db),
     cid: int = Depends(get_company_id),
 ):
-    get_variant(db, cid, variant_id)
+    variant = get_variant(db, cid, variant_id)
     physical = physical_stock(db, variant_id)
     reserved = reserved_qty(db, variant_id)
     return schemas.StockOut(
@@ -78,6 +89,8 @@ def get_stock(
         physical=physical,
         reserved=reserved,
         available=physical - reserved,
+        production_qty=variant.production_qty,
+        inbound_qty=inbound_total(db, variant_id),
     )
 
 
@@ -110,6 +123,18 @@ def create_movement(
     else:
         delta = SIGN[body.movement_type] * body.quantity
 
+    # 累計入庫超過製作量是異常（廠商多做/補瑕疵品/輸入錯誤），必須留下原因
+    if body.movement_type == MovementType.INBOUND.value:
+        done = inbound_total(db, body.variant_id)
+        excess = done + body.quantity - variant.production_qty
+        if excess > 0 and not (body.notes and body.notes.strip()):
+            raise HTTPException(
+                409,
+                f"累計入庫將達 {done + body.quantity}，超過製作量 "
+                f"{variant.production_qty} 共 {excess} 件（已入庫 {done}）。"
+                f"超量入庫請在備註填寫原因",
+            )
+
     if delta < 0 and physical_stock(db, body.variant_id) + delta < 0:
         raise HTTPException(409, "實體庫存不足，無法扣除這個數量")
 
@@ -134,6 +159,33 @@ def create_movement(
     db.add(movement)
     db.commit()
     return movement
+
+
+@router.delete("/movements/{movement_id}", status_code=204)
+def delete_movement(
+    movement_id: int,
+    db: Session = Depends(get_db),
+    cid: int = Depends(get_company_id),
+):
+    """刪除一筆異動明細（輸入錯誤的修正手段）。
+
+    TODO 帳號權限里程碑：此操作限管理者，並要求輸入密碼確認。
+    """
+    movement = db.scalar(
+        select(InventoryMovement).where(
+            InventoryMovement.id == movement_id,
+            InventoryMovement.company_id == cid,
+        )
+    )
+    if movement is None:
+        raise HTTPException(404, "找不到這筆異動")
+    # 刪掉後實體庫存不可變負（例如那批入庫的貨已被後續銷售用掉）
+    if physical_stock(db, movement.variant_id) - movement.quantity_delta < 0:
+        raise HTTPException(
+            409, "刪除這筆會讓實體庫存變成負數（這批貨已被後續異動用掉），不能刪除"
+        )
+    db.delete(movement)
+    db.commit()
 
 
 @router.post("/daily-sales", status_code=201)
