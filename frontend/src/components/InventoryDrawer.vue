@@ -175,7 +175,7 @@ async function shipAll() {
   emit('changed')
 }
 
-// TODO 帳號權限里程碑：刪除明細改為限管理者、輸入密碼確認
+// 刪除明細＝動帳，僅限管理者且需重新輸入密碼確認
 async function deleteMovement(m) {
   const desc = `${m.movement_date}｜${TYPE_LABEL[m.movement_type]}｜` +
     `${m.quantity_delta > 0 ? '+' : ''}${m.quantity_delta}`
@@ -183,16 +183,25 @@ async function deleteMovement(m) {
   if (m.channel === 'preorder') {
     msg += '\n注意：這是預購出貨產生的紀錄，刪除後預購狀態不會自動變回圈存'
   }
+  let password
   try {
-    await ElMessageBox.confirm(msg, '刪除異動明細', {
-      confirmButtonText: '刪除',
-      cancelButtonText: '取消',
-      type: 'warning',
-    })
+    ;({ value: password } = await ElMessageBox.prompt(
+      `${msg}\n\n請輸入你的管理者密碼確認：`,
+      '刪除異動明細（僅限管理者）',
+      {
+        inputType: 'password',
+        confirmButtonText: '刪除',
+        cancelButtonText: '取消',
+        type: 'warning',
+        inputValidator: (v) => !!v || '請輸入密碼',
+      },
+    ))
   } catch {
     return
   }
-  await api.delete(`/inventory/movements/${m.id}`)
+  await api.delete(`/inventory/movements/${m.id}`, {
+    headers: { 'X-Confirm-Password': password },
+  })
   ElMessage.success('已刪除')
   await load()
   emit('changed')

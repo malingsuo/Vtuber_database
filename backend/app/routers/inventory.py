@@ -1,11 +1,12 @@
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import schemas
-from app.deps import get_company_id, get_db
+from app.auth import verify_password
+from app.deps import get_company_id, get_db, require_admin
 from app.models import (
     InventoryMovement,
     MovementType,
@@ -164,13 +165,19 @@ def create_movement(
 @router.delete("/movements/{movement_id}", status_code=204)
 def delete_movement(
     movement_id: int,
+    confirm_password: str | None = Header(None, alias="X-Confirm-Password"),
+    admin=Depends(require_admin),
     db: Session = Depends(get_db),
     cid: int = Depends(get_company_id),
 ):
     """刪除一筆異動明細（輸入錯誤的修正手段）。
 
-    TODO 帳號權限里程碑：此操作限管理者，並要求輸入密碼確認。
+    帳是系統的根基，所以這個操作限管理者，且要重新輸入密碼確認。
     """
+    if not confirm_password or not verify_password(
+        confirm_password, admin.password_hash
+    ):
+        raise HTTPException(403, "密碼確認失敗，未執行刪除")
     movement = db.scalar(
         select(InventoryMovement).where(
             InventoryMovement.id == movement_id,

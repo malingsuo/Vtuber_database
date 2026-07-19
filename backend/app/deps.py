@@ -1,12 +1,11 @@
 from collections.abc import Generator
 
+from fastapi import Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
+from app.auth import decode_token
 from app.db import SessionLocal
-
-# 本機單公司版：所有資料都掛在種子資料建立的第一家公司底下。
-# 多公司版上線時，改成從登入使用者身上取得。
-DEFAULT_COMPANY_ID = 1
+from app.models import User, UserRole
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -17,5 +16,32 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
-def get_company_id() -> int:
-    return DEFAULT_COMPANY_ID
+def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
+    header = request.headers.get("Authorization", "")
+    if not header.startswith("Bearer "):
+        raise HTTPException(401, "請先登入")
+    payload = decode_token(header.removeprefix("Bearer "))
+    if payload is None:
+        raise HTTPException(401, "登入已過期，請重新登入")
+    user = db.get(User, int(payload["sub"]))
+    if user is None or not user.is_active:
+        raise HTTPException(401, "帳號不存在或已停用")
+    return user
+
+
+def authorize(request: Request, user: User = Depends(get_current_user)) -> User:
+    """掛在所有業務路由上：唯讀角色擋掉任何寫入。"""
+    if request.method != "GET" and user.role == UserRole.VIEWER.value:
+        raise HTTPException(403, "唯讀帳號不能修改資料")
+    return user
+
+
+def require_admin(user: User = Depends(get_current_user)) -> User:
+    if user.role != UserRole.ADMIN.value:
+        raise HTTPException(403, "此操作僅限管理者")
+    return user
+
+
+def get_company_id(user: User = Depends(get_current_user)) -> int:
+    """資料隔離的核心：company_id 一律來自登入者，不再是固定值。"""
+    return user.company_id

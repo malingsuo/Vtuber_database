@@ -15,6 +15,45 @@ class ORMBase(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+# ── 登入與使用者 ──
+
+class LoginIn(BaseModel):
+    username: str
+    password: str
+
+
+class UserOut(ORMBase):
+    id: int
+    username: str
+    display_name: str | None
+    role: str
+    is_active: bool
+
+
+class TokenOut(BaseModel):
+    token: str
+    user: UserOut
+
+
+class UserCreate(BaseModel):
+    username: str = Field(min_length=3, max_length=50)
+    password: str = Field(min_length=6)
+    display_name: str | None = None
+    role: Literal["admin", "editor", "viewer"] = "editor"
+
+
+class UserUpdate(BaseModel):
+    display_name: str | None = None
+    role: Literal["admin", "editor", "viewer"] | None = None
+    is_active: bool | None = None
+    password: str | None = Field(default=None, min_length=6)  # 管理者重設密碼
+
+
+class ChangePasswordIn(BaseModel):
+    old_password: str
+    new_password: str = Field(min_length=6)
+
+
 # ── 藝人 ──
 
 class ArtistCreate(BaseModel):

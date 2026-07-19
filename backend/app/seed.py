@@ -4,13 +4,13 @@
 固定亂數種子，每次產生的資料相同；資料庫已有資料時拒絕執行以免重複灌入。
 """
 
-import hashlib
 import random
 from datetime import date, timedelta
 from decimal import Decimal
 
 from sqlalchemy import func, select
 
+from app.auth import hash_password
 from app.db import SessionLocal
 from app.models import (
     Artist,
@@ -100,12 +100,17 @@ def main() -> None:
     admin = User(
         company_id=cid,
         username="admin",
-        # 暫用 sha256 佔位，登入模組實作時改成 bcrypt
-        password_hash=hashlib.sha256(b"admin123").hexdigest(),
+        password_hash=hash_password("admin123"),
         display_name="管理員",
         role=UserRole.ADMIN.value,
     )
     session.add(admin)
+    session.add(User(company_id=cid, username="editor",
+                     password_hash=hash_password("editor123"),
+                     display_name="輸入員", role=UserRole.EDITOR.value))
+    session.add(User(company_id=cid, username="viewer",
+                     password_hash=hash_password("viewer123"),
+                     display_name="唯讀帳號", role=UserRole.VIEWER.value))
 
     artists = [
         Artist(
