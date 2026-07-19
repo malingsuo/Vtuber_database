@@ -12,6 +12,7 @@ from app.routers import (
     artists,
     auth_router,
     events,
+    excel,
     expenses,
     forecast,
     inventory,
@@ -74,7 +75,7 @@ for router in (artists.router, events.router, item_types.router,
                vendors.router, products.router,
                inventory.router, preorders.router,
                expenses.router, reports.router, forecast.router,
-               quotes.router, artist_metrics.router):
+               quotes.router, artist_metrics.router, excel.router):
     app.include_router(router, prefix="/api", dependencies=[Depends(authorize)])
 
 

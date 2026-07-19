@@ -144,6 +144,59 @@ async function addMetric() {
   loadMetrics()
 }
 
+// ── Excel 匯入/匯出 ──
+const importFile = ref(null)
+const importReport = ref(null)
+const importing = ref(false)
+
+function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+async function downloadTemplate() {
+  const res = await api.get('/excel/template', { responseType: 'blob' })
+  saveBlob(res.data, '匯入範本.xlsx')
+}
+
+async function exportAll() {
+  const res = await api.get('/excel/export', { responseType: 'blob' })
+  saveBlob(res.data, `週邊資料匯出_${today()}.xlsx`)
+}
+
+function onFileChange(file) {
+  importFile.value = file.raw
+  importReport.value = null
+}
+
+async function runImport(dryRun) {
+  if (!importFile.value) {
+    ElMessage.warning('先選擇 .xlsx 檔案')
+    return
+  }
+  importing.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', importFile.value)
+    const { data } = await api.post(`/excel/import?dry_run=${dryRun}`, fd)
+    importReport.value = data
+    if (data.imported) {
+      ElMessage.success(`匯入完成：${data.valid} 列資料已寫入`)
+      importFile.value = null
+    } else if (data.errors.length === 0) {
+      ElMessage.success('檢查通過，可以按「確認匯入」')
+    } else {
+      ElMessage.warning(`發現 ${data.errors.length} 個錯誤，請修正後重新上傳`)
+    }
+  } finally {
+    importing.value = false
+  }
+}
+
 async function deleteMetric(m) {
   try {
     await ElMessageBox.confirm(
@@ -312,6 +365,64 @@ async function deleteMetric(m) {
           <el-table-column />
         </el-table>
         <el-empty v-else description="選擇藝人來查看與輸入熱度紀錄" />
+      </el-tab-pane>
+
+      <!-- ── Excel 匯入/匯出 ── -->
+      <el-tab-pane label="Excel 匯入/匯出" name="excel">
+        <el-card style="margin-bottom: 16px">
+          <template #header>匯入歷史資料</template>
+          <p class="hint">
+            流程：下載範本 → 照格式填歷史資料（範例列要刪掉）→ 上傳 → 檢查 → 確認匯入。
+            任何一列有錯就整批不寫入，錯誤會逐列列出。藝人/品項/活動不存在會自動建立。
+          </p>
+          <el-space wrap>
+            <el-button @click="downloadTemplate">下載匯入範本</el-button>
+            <el-upload
+              :auto-upload="false" :limit="1" accept=".xlsx"
+              :show-file-list="true" :on-change="onFileChange"
+              :on-remove="() => { importFile = null; importReport = null }"
+            >
+              <el-button type="primary" plain>選擇檔案</el-button>
+            </el-upload>
+            <el-button
+              :disabled="!importFile" :loading="importing"
+              @click="runImport(true)"
+            >檢查檔案</el-button>
+            <el-button
+              type="primary"
+              :disabled="!importReport || importReport.errors.length > 0 || importReport.imported"
+              :loading="importing"
+              @click="runImport(false)"
+            >確認匯入</el-button>
+          </el-space>
+
+          <template v-if="importReport">
+            <el-alert
+              :type="importReport.errors.length ? 'error'
+                : importReport.imported ? 'success' : 'info'"
+              :closable="false" style="margin-top: 12px"
+              :title="`共 ${importReport.total} 列，通過 ${importReport.valid} 列`
+                + `；將建立：活動 ${importReport.new_events}、藝人 ${importReport.new_artists}`
+                + `、品項 ${importReport.new_item_types}、商品 ${importReport.new_products}`
+                + (importReport.imported ? '——已寫入' : '')"
+            />
+            <el-table
+              v-if="importReport.errors.length"
+              :data="importReport.errors" size="small" style="margin-top: 8px"
+            >
+              <el-table-column prop="row" label="列" width="70" />
+              <el-table-column prop="message" label="錯誤" min-width="300" />
+            </el-table>
+          </template>
+        </el-card>
+
+        <el-card>
+          <template #header>匯出全部資料</template>
+          <p class="hint">
+            四張工作表：商品銷售明細、報價紀錄、檔期開支、藝人熱度。備份或離線分析用。
+          </p>
+          <el-button type="primary" @click="exportAll">匯出 Excel</el-button>
+        </el-card>
       </el-tab-pane>
     </el-tabs>
   </div>

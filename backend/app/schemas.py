@@ -467,6 +467,24 @@ class ArtistMetricOut(ORMBase):
     value: int
 
 
+# ── Excel 匯入 ──
+
+class ImportRowError(BaseModel):
+    row: int      # Excel 列號（含標題列的實際列號）
+    message: str
+
+
+class ImportReport(BaseModel):
+    total: int    # 讀到的資料列數
+    valid: int
+    errors: list[ImportRowError]
+    new_events: int
+    new_artists: int
+    new_item_types: int
+    new_products: int
+    imported: bool  # False = 只驗證（dry run）或有錯誤未匯入
+
+
 # ── 預測 ──
 
 class DemandObservation(BaseModel):
