@@ -29,12 +29,17 @@ SIGN = {
 }
 
 
-def get_variant(db: Session, cid: int, variant_id: int) -> ProductVariant:
-    variant = db.scalar(
-        select(ProductVariant).where(
-            ProductVariant.id == variant_id, ProductVariant.company_id == cid
-        )
+def get_variant(
+    db: Session, cid: int, variant_id: int, for_update: bool = False
+) -> ProductVariant:
+    stmt = select(ProductVariant).where(
+        ProductVariant.id == variant_id, ProductVariant.company_id == cid
     )
+    if for_update:
+        # 悲觀鎖：把「查庫存→寫異動」序列化，防止並發超賣（交接文件 1.1）。
+        # 交易 commit/rollback 時自動釋放；SQLite 不支援會無視（僅開發環境）
+        stmt = stmt.with_for_update()
+    variant = db.scalar(stmt)
     if variant is None:
         raise HTTPException(404, "找不到這個商品規格")
     return variant
@@ -117,7 +122,7 @@ def create_movement(
     db: Session = Depends(get_db),
     cid: int = Depends(get_company_id),
 ):
-    variant = get_variant(db, cid, body.variant_id)
+    variant = get_variant(db, cid, body.variant_id, for_update=True)
 
     if body.movement_type == MovementType.ADJUSTMENT.value:
         delta = body.quantity  # 帶正負號
@@ -186,6 +191,7 @@ def delete_movement(
     )
     if movement is None:
         raise HTTPException(404, "找不到這筆異動")
+    get_variant(db, cid, movement.variant_id, for_update=True)  # 鎖規格再驗庫存
     # 刪掉後實體庫存不可變負（例如那批入庫的貨已被後續銷售用掉）
     if physical_stock(db, movement.variant_id) - movement.quantity_delta < 0:
         raise HTTPException(
@@ -204,7 +210,7 @@ def daily_sales(
     """逐日銷售輸入：一次寫入整場活動的當日銷量（全部成功或全部不寫）。"""
     created = 0
     for item in body.items:
-        variant = get_variant(db, cid, item.variant_id)
+        variant = get_variant(db, cid, item.variant_id, for_update=True)
         if physical_stock(db, item.variant_id) - item.quantity < 0:
             db.rollback()
             raise HTTPException(

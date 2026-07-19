@@ -16,10 +16,16 @@ from app.routers.inventory import default_price, get_variant, physical_stock
 router = APIRouter(prefix="/preorders", tags=["預購"])
 
 
-def _get_or_404(db: Session, cid: int, preorder_id: int) -> Preorder:
-    preorder = db.scalar(
-        select(Preorder).where(Preorder.id == preorder_id, Preorder.company_id == cid)
+def _get_or_404(
+    db: Session, cid: int, preorder_id: int, for_update: bool = False
+) -> Preorder:
+    stmt = select(Preorder).where(
+        Preorder.id == preorder_id, Preorder.company_id == cid
     )
+    if for_update:
+        # 鎖預購列：防同一筆被並發按兩次出貨而重複扣庫存（交接文件 1.1）
+        stmt = stmt.with_for_update()
+    preorder = db.scalar(stmt)
     if preorder is None:
         raise HTTPException(404, "找不到這筆預購")
     return preorder
@@ -87,6 +93,9 @@ def ship_preorder(
     cid: int = Depends(get_company_id),
 ):
     preorder = _get_or_404(db, cid, preorder_id)
+    # 鎖定順序全系統一致：先鎖規格、再鎖預購（與 ship_all 相同，避免死鎖）
+    get_variant(db, cid, preorder.variant_id, for_update=True)
+    preorder = _get_or_404(db, cid, preorder_id, for_update=True)
     if preorder.status != PreorderStatus.RESERVED.value:
         raise HTTPException(409, "只有圈存中的預購可以出貨")
     if physical_stock(db, preorder.variant_id) < preorder.quantity:
@@ -103,7 +112,7 @@ def cancel_preorder(
     db: Session = Depends(get_db),
     cid: int = Depends(get_company_id),
 ):
-    preorder = _get_or_404(db, cid, preorder_id)
+    preorder = _get_or_404(db, cid, preorder_id, for_update=True)
     if preorder.status != PreorderStatus.RESERVED.value:
         raise HTTPException(409, "只有圈存中的預購可以取消")
     preorder.status = PreorderStatus.CANCELLED.value
@@ -119,13 +128,15 @@ def ship_all(
     cid: int = Depends(get_company_id),
 ):
     """把某規格所有圈存中的預購一次出貨。"""
-    get_variant(db, cid, body.variant_id)
+    get_variant(db, cid, body.variant_id, for_update=True)  # 先鎖規格
     reserved = db.scalars(
-        select(Preorder).where(
+        select(Preorder)
+        .where(
             Preorder.company_id == cid,
             Preorder.variant_id == body.variant_id,
             Preorder.status == PreorderStatus.RESERVED.value,
         )
+        .with_for_update()  # 再鎖預購列
     ).all()
     if not reserved:
         raise HTTPException(409, "這個規格沒有圈存中的預購")

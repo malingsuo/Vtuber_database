@@ -70,13 +70,9 @@ def create_user(
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    exists = db.scalar(
-        select(User.id).where(
-            User.company_id == admin.company_id, User.username == body.username
-        )
-    )
-    if exists:
-        raise HTTPException(409, "帳號名稱已存在")
+    # username 全系統唯一（登入只憑帳號名，見交接文件漏洞 A）
+    if db.scalar(select(User.id).where(User.username == body.username)):
+        raise HTTPException(409, "帳號名稱已被使用（全系統唯一），請換一個")
     user = User(
         company_id=admin.company_id,
         username=body.username,

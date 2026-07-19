@@ -200,6 +200,12 @@ def forecast(
         raise HTTPException(422, "找不到指定的品項")
     if price <= 0:
         raise HTTPException(422, "售價必須大於 0")
+    # 極端輸入攔截（交接文件 1.2 的兩條當機路徑）：
+    # salvage ≥ price → 關鍵比率除以零或變負；cost = 0 → CR=1 → Φ⁻¹(1)=∞
+    if salvage >= price:
+        raise HTTPException(422, "殘值必須低於售價")
+    if cost is not None and cost <= 0:
+        raise HTTPException(422, "單位成本必須大於 0（成本未知就留空，仍可看報價點比較）")
 
     demand = _estimate_demand(db, cid, artist_id, item_type_id)
 
@@ -210,7 +216,8 @@ def forecast(
         if cost >= price:
             warning = "成本不低於售價，賣一個賠一個——不建議生產，或先調整售價"
         else:
-            critical_ratio = (price - cost) / (price - salvage)
+            # 上限保險絲：任何未來路徑都不可把 CR=1 餵給 norm.ppf（會回無限大）
+            critical_ratio = min((price - cost) / (price - salvage), 0.999)
             z = float(norm.ppf(critical_ratio))
             recommended_qty = max(0, round(demand.mu + demand.sigma * z))
             expected_profit = round(

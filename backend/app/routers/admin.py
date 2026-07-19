@@ -45,6 +45,8 @@ def create_company(
     """開通新公司：建立公司＋該公司的第一個小管理員帳號。"""
     if db.scalar(select(Company.id).where(Company.name == body.name)):
         raise HTTPException(409, "同名公司已存在")
+    if db.scalar(select(User.id).where(User.username == body.admin_username)):
+        raise HTTPException(409, "小管理員帳號名稱已被使用（全系統唯一），請換一個")
     company = Company(name=body.name)
     db.add(company)
     db.flush()

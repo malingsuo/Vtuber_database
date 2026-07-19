@@ -308,13 +308,13 @@ class User(CompanyMixin, TimestampMixin, Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    username: Mapped[str] = mapped_column(String(50))
+    # 全域唯一（不是公司內唯一）：登入只憑 username，跨公司同名會讓
+    # 後建的帳號永遠登不進來——這是交接文件漏洞 A 的修補
+    username: Mapped[str] = mapped_column(String(50), unique=True)
     password_hash: Mapped[str] = mapped_column(String(200))
     display_name: Mapped[str | None] = mapped_column(String(100))
     role: Mapped[str] = mapped_column(String(20), default=UserRole.EDITOR.value)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-
-    __table_args__ = (UniqueConstraint("company_id", "username"),)
 
 
 class AuditLog(CompanyMixin, Base):
