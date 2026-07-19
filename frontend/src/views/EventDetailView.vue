@@ -96,6 +96,11 @@ function openDialog(artist) {
   dialogOpen.value = true
 }
 
+async function reloadItemTypes() {
+  const { data } = await api.get('/item-types')
+  itemTypes.value = data
+}
+
 function addForNewArtist() {
   const artist = allArtists.value.find((a) => a.id === newArtistId.value)
   if (artist) openDialog(artist)
@@ -315,6 +320,7 @@ async function confirmDelete() {
         :vendors="vendors"
         :artist-variants="dialogArtistVariants"
         @saved="load"
+        @item-type-added="reloadItemTypes"
       />
 
       <DailySalesDialog

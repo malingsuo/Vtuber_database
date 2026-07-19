@@ -1,6 +1,6 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api.js'
 
 const props = defineProps({
@@ -12,7 +12,7 @@ const props = defineProps({
   // 該藝人此活動已有的規格（做套組內容物用）：[{ id, label }]
   artistVariants: Array,
 })
-const emit = defineEmits(['update:modelValue', 'saved'])
+const emit = defineEmits(['update:modelValue', 'saved', 'item-type-added'])
 
 // 欄位以空值起始，讓格子內的提示文字（placeholder）看得到
 const emptyVariant = () => ({
@@ -32,6 +32,7 @@ const form = reactive({
   notes: '',
   is_bundle: false,
   bundle_qty: null,
+  auto_inbound: false,
   variants: [emptyVariant()],
   bundle_selection: [],
 })
@@ -40,6 +41,7 @@ watch(
   () => props.modelValue,
   (open) => {
     if (open) {
+      lastAutoName = ''
       Object.assign(form, {
         item_type_id: null,
         name: '',
@@ -49,6 +51,7 @@ watch(
         notes: '',
         is_bundle: false,
         bundle_qty: null,
+        auto_inbound: false,
         variants: [emptyVariant()],
         bundle_selection: props.artistVariants.map((v) => ({
           variant_id: v.id,
@@ -61,10 +64,40 @@ watch(
   },
 )
 
-// 選品項類別時自動帶出商品名（可再改）
+// 選品項類別時自動帶出商品名。記住「上次自動產生的名稱」：
+// 名稱還是自動值就跟著品項換；使用者自己改過的就不動
+let lastAutoName = ''
+
+function applyAutoName(itemTypeName) {
+  if (!form.name || form.name === lastAutoName) {
+    form.name = `${props.artist.name} ${itemTypeName}`
+    lastAutoName = form.name
+  }
+}
+
 function onItemTypeChange(id) {
   const it = props.itemTypes.find((t) => t.id === id)
-  if (it && !form.name) form.name = `${props.artist.name} ${it.name}`
+  if (it) applyAutoName(it.name)
+}
+
+// 選單裡沒有的品項，當場新增並自動選上
+async function addItemType() {
+  let name
+  try {
+    const { value } = await ElMessageBox.prompt('輸入新品項名稱', '新增品項類別', {
+      confirmButtonText: '建立',
+      cancelButtonText: '取消',
+      inputValidator: (v) => !!v?.trim() || '名稱不能空白',
+    })
+    name = value.trim()
+  } catch {
+    return
+  }
+  const { data } = await api.post('/item-types', { name })
+  ElMessage.success(`品項「${data.name}」已建立`)
+  emit('item-type-added') // 讓父頁面重抓品項清單
+  form.item_type_id = data.id
+  applyAutoName(data.name)
 }
 
 function copyLastVariant() {
@@ -86,7 +119,7 @@ const submitting = ref(false)
 async function submit() {
   submitting.value = true
   try {
-    await api.post('/products', {
+    const { data: created } = await api.post('/products', {
       event_id: props.eventId,
       artist_id: props.artist.id,
       item_type_id: form.is_bundle ? null : form.item_type_id,
@@ -117,7 +150,24 @@ async function submit() {
             .map((b) => ({ variant_id: b.variant_id, quantity: b.quantity }))
         : [],
     })
-    ElMessage.success('商品已建立')
+    // 勾了「貨已到」：對每個規格自動寫一筆入庫（數量＝製作量）
+    if (form.auto_inbound) {
+      const today = new Date().toISOString().slice(0, 10)
+      for (const v of created.variants) {
+        if (v.production_qty > 0) {
+          await api.post('/inventory/movements', {
+            variant_id: v.id,
+            movement_type: 'inbound',
+            quantity: v.production_qty,
+            movement_date: today,
+            notes: '建立商品時自動入庫',
+          })
+        }
+      }
+      ElMessage.success('商品已建立，並依製作量完成入庫')
+    } else {
+      ElMessage.success('商品已建立（貨到後記得到商品列做「入庫」，庫存才會出現）')
+    }
     emit('update:modelValue', false)
     emit('saved')
   } finally {
@@ -145,6 +195,11 @@ async function submit() {
         >
           <el-option v-for="t in itemTypes" :key="t.id" :label="t.name" :value="t.id" />
         </el-select>
+        <el-button
+          v-if="!form.is_bundle"
+          link type="primary" style="margin-left: 8px"
+          @click="addItemType"
+        >＋新增品項</el-button>
         <el-tag v-else type="success">套組（內容物可跨品項，不必選類別）</el-tag>
         <el-switch
           v-model="form.is_bundle"
@@ -233,6 +288,15 @@ async function submit() {
           </div>
         </el-form-item>
       </template>
+
+      <el-form-item label="到貨入庫">
+        <el-checkbox v-model="form.auto_inbound">
+          貨已到手上，建立後依製作量自動入庫
+        </el-checkbox>
+        <div class="hint" style="margin-left: 0">
+          沒勾的話庫存會是 0（貨還在廠商那），之後點商品列手動「入庫」
+        </div>
+      </el-form-item>
 
       <el-form-item label="廠商">
         <el-select v-model="form.vendor_id" clearable placeholder="選填" style="width: 200px">

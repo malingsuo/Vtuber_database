@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api.js'
 
@@ -35,9 +35,6 @@ function goDetail() {
   if (selectedEvent.value) router.push(`/events/${selectedEvent.value}`)
 }
 
-// 刪除商品時是否要求輸入商品名稱確認（存在瀏覽器 localStorage，預設開啟）
-const confirmByName = ref(localStorage.getItem('delete_confirm_by_name') !== 'false')
-watch(confirmByName, (v) => localStorage.setItem('delete_confirm_by_name', String(v)))
 </script>
 
 <template>
@@ -79,11 +76,5 @@ watch(confirmByName, (v) => localStorage.setItem('delete_confirm_by_name', Strin
       description="從年份開始，逐層選到你要查的活動"
     />
 
-    <el-divider />
-    <h3>設定</h3>
-    <el-space>
-      <el-switch v-model="confirmByName" />
-      <span>刪除商品前需輸入完整商品名稱確認（關閉則只跳一般確認框）</span>
-    </el-space>
   </div>
 </template>
