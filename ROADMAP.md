@@ -91,6 +91,64 @@ HANDOFF.md 標記的待處理項，已全部修補（詳見 HANDOFF.md 修補狀
 
 ---
 
+## Phase D：桌面版產品化（免費試用 → 付費完整版）
+
+> **商業模式**：GitHub 釋出免費試用版（功能鎖＋資料量上限）→ 用習慣後購買授權檔解鎖完整版。付費版＝完全離線、全功能、Nuitka 編譯的 exe（原始碼不可見）。
+> **給接手 AI（Opus）的說明**：D1→D5 嚴格依序執行，每個任務都有〔目標／實作／驗收〕。驗收全部通過才可進下一項。全程遵守 HANDOFF.md 的六條絕對約束。**單一程式碼庫**：桌面版與雲端版共用程式碼，用環境變數 `APP_MODE=desktop|cloud` 區分，禁止 fork 出第二份程式碼。
+
+### D1. 單機執行基礎（不依賴 Docker/Node）
+
+- **目標**：一個資料夾、一個指令，在沒有 Docker、沒有 Node 的電腦上跑起完整系統。
+- **實作**：
+  1. `app/config.py` 加 `app_mode: str = "cloud"`；desktop 模式下 `database_url` 預設指向**使用者資料夾**的 SQLite：Windows `%APPDATA%/VtuberMerch/app.db`、macOS/Linux `~/.vtuber-merch/app.db`（用 `platformdirs` 套件取路徑，目錄不存在就建立）。**資料庫絕不放程式資料夾**——這是更新不掉資料的前提。
+  2. `app/main.py`：desktop 模式下用 `StaticFiles` 供應 `frontend/dist`（掛在 `/`，API 維持 `/api`；SPA fallback 把非 /api 路徑導回 index.html）。
+  3. 新增 `app/desktop.py` 啟動器：啟動時自動 `alembic upgrade head` → 若資料庫全空自動建預設管理員（`admin/admin123`，首頁提示改密碼）與預設品項清單 → 起 uvicorn（僅綁 127.0.0.1）→ `webbrowser.open("http://127.0.0.1:8620")`。
+  4. 埠固定 8620（避開常見占用），被占用時往上找。
+- **驗收（Opus 自查）**：`APP_MODE=desktop poetry run python -m app.desktop` 在**停用 Docker** 的狀態下啟動；瀏覽器打開就是登入頁；建活動→商品→入庫→報表全流程可走；把程式資料夾整個刪掉重解壓，資料（在使用者資料夾）**還在**；TESTING_GUIDE §1 在 desktop 模式全數通過（多租戶 §2 除外——桌面版單公司）。
+
+### D2. 試用版功能鎖與授權機制（先做鎖，再做打包——順序刻意如此，打包要驗證鎖有效）
+
+- **目標**：同一顆程式，無授權檔＝試用版，有合法授權檔＝完整版。
+- **授權設計（Ed25519 非對稱簽章，完全離線可驗）**：
+  - 授權檔 `license.key`（放資料夾同層或由 UI 匯入）內容：`{"licensee": "購買者名稱", "email": "...", "issued": "YYYY-MM-DD", "edition": "full"}` ＋ 你用**私鑰**對這段 JSON 的簽章，base64 打包。
+  - 程式內嵌**公鑰**驗簽（`cryptography` 套件）。私鑰只存在你手上——新增 `tools/issue_license.py`（**不隨產品發布**，放 repo 但打包時排除）給你簽發授權用。
+  - 不做機器綁定（離線友善、客服成本低）；授權檔內含購買者姓名即可嚇阻隨意流傳。
+- **試用限制（資料量＋功能鎖，不用天數——離線改時鐘就能繞過天數）**：
+  - 活動上限 **5 場**、藝人上限 **3 位**（建立第 6/4 個時後端回 402，訊息附購買資訊）。
+  - **預測模組**與 **Excel 匯入**整個上鎖（403 + 前端顯示「完整版功能」蒙版）——Excel「匯出」保持開放，使用者的資料永遠拿得走，這是信任底線。
+- **實作**：新增 `app/license.py`（載入/驗簽/回傳 edition）；新增依賴 `require_full_edition`（掛在 forecast 與 excel import 路由）；上限檢查加在 events/artists 的 create；`GET /api/license/status` 回目前版本與限制；前端登入後顯示「試用版｜完整版」徽章與匯入授權檔的入口（設定頁）。
+- **驗收**：無授權檔＝建第 6 場活動回 402、預測頁顯示鎖定蒙版；用 `issue_license.py` 簽一張授權、由 UI 匯入 → 全功能解鎖、不用重啟；**手改授權檔任一字元 → 驗簽失敗回試用版**；`cloud` 模式完全不受授權機制影響（SaaS 版永遠全功能）。
+
+### D3. Windows 打包（Nuitka 編譯，原始碼保護）
+
+- **目標**：單一資料夾（onefile 啟動太慢，用 standalone 資料夾＋捷徑）的 Windows 發行包，雙擊 `VtuberMerch.exe` 即用。
+- **實作**：
+  1. 前端 `npm run build` 產出 dist，一併打包。
+  2. Nuitka：`python -m nuitka --standalone --follow-imports app/desktop.py`，`--include-data-dir` 帶入 dist 與 migrations；`tools/` 目錄**必須排除**（簽發私鑰工具不能出貨）。
+  3. 寫 `tools/build_desktop.ps1` 一鍵建置腳本；產物用 Inno Setup 或 zip 發布。
+  4. `--windows-icon` 與版本資訊；考慮 `--windows-console-mode=disable`。
+- **原始碼保護的誠實邊界（寫給老闆看的）**：Nuitka 編譯為機器碼，逆向難度＝一般商業軟體；不存在絕對防破解，目標是「破解成本 > 售價」。授權驗簽在 Nuitka 編譯層內，無法用改設定檔繞過。
+- **驗收**：在**乾淨的 Windows（無 Python/Node/Docker）**虛擬機解壓即跑；發行包內用文字編輯器/解包工具**找不到任何 .py 原始碼**；試用限制在打包版中生效；D2 的授權匯入在打包版中生效。
+
+### D4. 保留資料的更新機制（回答「使用者買了之後怎麼更新」）
+
+- **目標**：使用者下載新版覆蓋（或安裝程式自動覆蓋）→ 開啟 → 資料與授權完好、結構自動升級。
+- **實作**：
+  1. 資料庫與 `license.key` 都在使用者資料夾（D1 已保證）→ 覆蓋程式資料夾**天然不碰資料**。
+  2. `app/desktop.py` 啟動流程加固：偵測到資料庫版本落後 → **先自動備份**（複製 `app.db` 為 `app.db.backup-日期`，並輸出一份 Excel 匯出到使用者資料夾）→ 再跑 `alembic upgrade head` → 失敗則還原備份並顯示可讀的錯誤訊息。
+  3. 版本號顯示在前端頁尾（讀 `app/version.py`）；`GET /api/system/version` 供未來「檢查更新」用（僅提示，不自動下載——維持離線原則）。
+- **驗收（模擬真實升級）**：用舊版建資料 → 換上含新 migration 的新版程式 → 啟動後資料還在、新欄位可用、使用者資料夾出現備份檔；故意放一個會失敗的 migration → 啟動顯示錯誤且原資料庫未被破壞。
+
+### D5. 發布與試用轉付費動線
+
+- GitHub Releases 放試用版 zip（**發行包不含原始碼**；repo 本身若要開源需另行決策——預設**私有 repo，只發 Releases**）。
+- README 加「下載試用 → 購買 → 收到 license.key → 設定頁匯入」四步說明；購買管道（表單/信箱）由你決定。
+- 驗收：一位非工程背景測試者能在 10 分鐘內完成下載→安裝→建第一筆商品，全程不需要任何指令。
+
+**Phase D 順序與依賴**：D1（單機基礎）→ D2（授權鎖，功能面）→ D3（打包，驗證鎖在編譯版有效）→ D4（更新機制）→ D5（發布）。D1/D2 可在現有開發環境完成；D3 起需要 Windows 環境。與 Phase 1~4 無依賴衝突，可穿插進行，但 **D2 的 402/403 閘要在新功能（如損益模擬器）加入時同步掛上**——新的付費級功能一律進 `require_full_edition` 清單。
+
+---
+
 ## 建議順序與里程碑切分
 
 ```
