@@ -22,6 +22,7 @@ function logout() {
         <el-menu-item index="/events/new">新建活動</el-menu-item>
         <el-menu-item index="/reports">報表</el-menu-item>
         <el-menu-item index="/forecast">預測</el-menu-item>
+        <el-menu-item index="/data">資料維護</el-menu-item>
         <el-menu-item index="/settings">設定</el-menu-item>
       </el-menu>
       <span v-if="session.user" class="user-info">

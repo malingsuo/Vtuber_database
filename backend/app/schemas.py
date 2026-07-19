@@ -421,6 +421,52 @@ class SummaryRow(BaseModel):
     sell_through: float
 
 
+# ── 報價紀錄 ──
+
+class QuoteCreate(BaseModel):
+    item_type_id: int
+    vendor_id: int | None = None
+    quantity: int = Field(gt=0)          # 詢價數量
+    unit_price: Decimal = Field(gt=0)    # 原幣單價
+    currency: str = Field(default="TWD", max_length=3)
+    exchange_rate: Decimal = Field(default=Decimal("1"), gt=0)
+    quote_date: date
+    notes: str | None = None
+    # unit_price_twd 由後端計算
+
+
+class QuoteOut(ORMBase):
+    id: int
+    item_type_id: int
+    vendor_id: int | None
+    quantity: int
+    unit_price: Decimal
+    currency: str
+    exchange_rate: Decimal
+    unit_price_twd: Decimal
+    quote_date: date
+    notes: str | None
+
+
+# ── 藝人熱度 ──
+
+class ArtistMetricCreate(BaseModel):
+    artist_id: int
+    record_date: date
+    platform: str = Field(min_length=1, max_length=30)  # YouTube / Twitch / X…
+    metric_type: str = Field(default="subscribers", max_length=30)
+    value: int = Field(ge=0)
+
+
+class ArtistMetricOut(ORMBase):
+    id: int
+    artist_id: int
+    record_date: date
+    platform: str
+    metric_type: str
+    value: int
+
+
 # ── 預測 ──
 
 class DemandObservation(BaseModel):

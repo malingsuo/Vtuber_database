@@ -7,6 +7,7 @@ const routes = [
   { path: '/events/:id', component: () => import('./views/EventDetailView.vue') },
   { path: '/reports', component: () => import('./views/ReportView.vue') },
   { path: '/forecast', component: () => import('./views/ForecastView.vue') },
+  { path: '/data', component: () => import('./views/DataView.vue') },
   { path: '/settings', component: () => import('./views/SettingsView.vue') },
 ]
 

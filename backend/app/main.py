@@ -8,6 +8,7 @@ from app.models import AuditLog
 from app.config import settings
 from app.routers import (
     admin,
+    artist_metrics,
     artists,
     auth_router,
     events,
@@ -17,6 +18,7 @@ from app.routers import (
     item_types,
     preorders,
     products,
+    quotes,
     reports,
     vendors,
 )
@@ -71,7 +73,8 @@ app.include_router(admin.router, prefix="/api")  # 內部自帶總管理員檢�
 for router in (artists.router, events.router, item_types.router,
                vendors.router, products.router,
                inventory.router, preorders.router,
-               expenses.router, reports.router, forecast.router):
+               expenses.router, reports.router, forecast.router,
+               quotes.router, artist_metrics.router):
     app.include_router(router, prefix="/api", dependencies=[Depends(authorize)])
 
 
