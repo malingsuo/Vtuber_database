@@ -1,7 +1,9 @@
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import VChart from 'vue-echarts'
 import api from '../api.js'
+import { CHANNEL_META, PALETTE } from '../charts.js'
 
 const years = ref([])
 const activeTab = ref('event')
@@ -33,17 +35,93 @@ async function onEvYearChange(year) {
   evList.value = data
 }
 
+const daily = ref([])
+
 async function loadReport() {
   if (!evId.value) return
-  const [r, a] = await Promise.all([
+  const [r, a, d] = await Promise.all([
     api.get(`/reports/events/${evId.value}`, {
       params: { allocate_bundles: allocateBundles.value },
     }),
     api.get('/artists'),
+    api.get(`/reports/events/${evId.value}/daily`),
   ])
   report.value = r.data
   artists.value = a.data
+  daily.value = d.data
 }
+
+// ── 圖表 option ──
+
+// 逐日銷售：日期 × 通路 堆疊長條
+const dailyOption = computed(() => {
+  const dates = [...new Set(daily.value.map((p) => p.date))].sort()
+  // 查表給 tooltip 用：date → channel → {qty, revenue}
+  const lookup = {}
+  for (const p of daily.value) {
+    ;(lookup[p.date] ??= {})[p.channel] = p
+  }
+  const series = Object.entries(CHANNEL_META).map(([key, meta]) => ({
+    name: meta.label,
+    type: 'bar',
+    stack: 'sales',
+    barMaxWidth: 28,
+    itemStyle: { color: meta.color, borderColor: '#fff', borderWidth: 2 },
+    data: dates.map((dt) => lookup[dt]?.[key]?.qty ?? 0),
+  }))
+  return {
+    grid: { left: 48, right: 16, top: 40, bottom: 28 },
+    legend: { top: 0, textStyle: { color: '#606266' } },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params) => {
+        const dt = params[0].axisValue
+        const lines = params
+          .filter((p) => p.value > 0)
+          .map((p) => {
+            const key = Object.keys(CHANNEL_META).find(
+              (k) => CHANNEL_META[k].label === p.seriesName,
+            )
+            const rev = Number(lookup[dt]?.[key]?.revenue ?? 0)
+            return `${p.marker} ${p.seriesName}：${p.value} 件｜NT$ ${Math.round(rev).toLocaleString()}`
+          })
+        return `<b>${dt}</b><br/>${lines.join('<br/>') || '無銷售'}`
+      },
+    },
+    xAxis: { type: 'category', data: dates, axisLine: { lineStyle: { color: '#dcdfe6' } } },
+    yAxis: {
+      type: 'value', name: '件',
+      splitLine: { lineStyle: { color: '#f2f3f5' } },
+    },
+    series,
+  }
+})
+
+// 藝人營收占比圓餅（超過 8 位摺疊為「其他」，不生成第 9 個顏色）
+const artistPieOption = computed(() => {
+  const rows = (report.value?.by_artist ?? []).filter((r) => Number(r.revenue) > 0)
+  let slices = rows.map((r) => ({ name: r.name, value: Math.round(Number(r.revenue)) }))
+  if (slices.length > 8) {
+    const rest = slices.slice(7).reduce((s, x) => s + x.value, 0)
+    slices = [...slices.slice(0, 7), { name: '其他', value: rest }]
+  }
+  return {
+    color: PALETTE,
+    tooltip: {
+      trigger: 'item',
+      formatter: (p) =>
+        `${p.marker} ${p.name}<br/>營收 NT$ ${p.value.toLocaleString()}（${p.percent}%）`,
+    },
+    series: [{
+      type: 'pie',
+      radius: ['45%', '70%'],
+      itemStyle: { borderColor: '#fff', borderWidth: 2 },
+      label: { color: '#606266', formatter: '{b}\n{d}%' },
+      data: slices,
+    }],
+  }
+})
 
 const allocatedRowClass = ({ row }) => (row.allocated ? 'allocated-row' : '')
 
@@ -155,6 +233,31 @@ async function loadSummaries() {
             </el-col>
             <el-col :span="12">
               <el-statistic title="淨利（毛利 − 開支 − 公關）" :value="Number(report.net)" prefix="NT$" />
+            </el-col>
+          </el-row>
+
+          <el-row :gutter="16">
+            <el-col :span="14">
+              <el-card class="block">
+                <template #header>逐日銷售（依通路）</template>
+                <VChart
+                  v-if="daily.length" :option="dailyOption"
+                  autoresize style="height: 300px"
+                />
+                <el-empty v-else description="此活動尚無銷售紀錄" :image-size="60" />
+              </el-card>
+            </el-col>
+            <el-col :span="10">
+              <el-card class="block">
+                <template #header>
+                  藝人營收占比{{ report.allocate_bundles ? '（攤分口徑）' : '' }}
+                </template>
+                <VChart
+                  v-if="artistPieOption.series[0].data.length"
+                  :option="artistPieOption" autoresize style="height: 300px"
+                />
+                <el-empty v-else description="尚無營收" :image-size="60" />
+              </el-card>
             </el-col>
           </el-row>
 

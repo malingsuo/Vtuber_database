@@ -409,6 +409,15 @@ class EventReport(BaseModel):
     by_item_type: list[ReportRow]
 
 
+class DailySalePoint(BaseModel):
+    """活動逐日銷售（依通路），給圖表用。"""
+
+    date: date
+    channel: str  # preorder / onsite / online
+    qty: int
+    revenue: Decimal
+
+
 class SummaryRow(BaseModel):
     """跨活動彙總（藝人或品項），可用年份過濾。"""
 

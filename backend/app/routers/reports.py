@@ -301,6 +301,45 @@ def event_report(
     )
 
 
+@router.get("/events/{event_id}/daily", response_model=list[schemas.DailySalePoint])
+def event_daily_sales(
+    event_id: int,
+    db: Session = Depends(get_db),
+    cid: int = Depends(get_company_id),
+):
+    """逐日 × 通路的銷量與營收（銷售淨額，含退回沖銷），供圖表使用。"""
+    if not db.scalar(
+        select(Event.id).where(Event.id == event_id, Event.company_id == cid)
+    ):
+        raise HTTPException(404, "找不到這場活動")
+    rows = db.execute(
+        select(
+            InventoryMovement.movement_date,
+            InventoryMovement.channel,
+            func.sum(-InventoryMovement.quantity_delta),
+            func.sum(
+                -InventoryMovement.quantity_delta
+                * func.coalesce(InventoryMovement.sale_price_twd, 0)
+            ),
+        )
+        .join(ProductVariant, InventoryMovement.variant_id == ProductVariant.id)
+        .join(Product, ProductVariant.product_id == Product.id)
+        .where(
+            Product.event_id == event_id,
+            Product.company_id == cid,
+            InventoryMovement.movement_type.in_(SALE_TYPES),
+        )
+        .group_by(InventoryMovement.movement_date, InventoryMovement.channel)
+        .order_by(InventoryMovement.movement_date)
+    ).all()
+    return [
+        schemas.DailySalePoint(
+            date=r[0], channel=r[1] or "onsite", qty=int(r[2]), revenue=r[3] or 0
+        )
+        for r in rows
+    ]
+
+
 @router.get("/artists", response_model=list[schemas.SummaryRow])
 def artists_summary(
     year: int | None = None,
