@@ -209,7 +209,9 @@ def daily_sales(
 ):
     """逐日銷售輸入：一次寫入整場活動的當日銷量（全部成功或全部不寫）。"""
     created = 0
-    for item in body.items:
+    # 依規格 id 排序後才逐一上鎖：本函式是全系統唯一會一次拿多個變體鎖的路徑，
+    # 若照呼叫端給的順序上鎖，兩批商品重疊且順序相反時會互等成死鎖
+    for item in sorted(body.items, key=lambda i: i.variant_id):
         variant = get_variant(db, cid, item.variant_id, for_update=True)
         if physical_stock(db, item.variant_id) - item.quantity < 0:
             db.rollback()

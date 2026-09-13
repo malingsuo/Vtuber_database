@@ -139,7 +139,9 @@ SaaS 的商業模式需要一個「停止服務但不刪資料」的開關：客
 
 **技術亮點**
 - 所有「先查庫存、再寫異動」的 check-then-act 路徑，開頭一律以 `SELECT ... FOR UPDATE` 鎖住規格列，把同一規格的寫入序列化：`create_movement`、`daily_sales`、`ship_preorder`、`ship_all`、`unship`、`delete_movement` 全部覆蓋。
-- **全系統統一鎖定順序：先鎖規格、再鎖預購列**——這是刻意的死鎖防治設計，任何新增的路徑都必須沿用同一順序。
+- **全系統統一鎖定順序（兩條規則，缺一不可）**——這是刻意的死鎖防治設計，任何新增的路徑都必須沿用：
+  1. **跨表：先鎖規格、再鎖預購列。** `ship_preorder`、`unship_preorder`、`ship_all` 三條路徑一致。
+  2. **同表：一次要拿多個規格鎖時，一律依規格 id 由小到大。** `daily_sales` 是全系統唯一會一次拿多個變體鎖的路徑，若照呼叫端給的順序上鎖，兩批商品重疊且順序相反時會互等成死鎖，故在迴圈前先 `sorted(body.items, key=lambda i: i.variant_id)`。
 - 選擇悲觀鎖而非 SERIALIZABLE 隔離級別：後者需要在應用層實作重試邏輯，對這個寫入衝突稀疏但關鍵的場景，成本效益不划算。
 - 相容性設計：SQLite（開發環境）會忽略 `FOR UPDATE`，PostgreSQL（正式環境）生效——開發不被環境卡住。
 - 已以 6 執行緒並發實測驗證無超賣（測試劇本見 `TESTING_GUIDE.md` §4.2）。
