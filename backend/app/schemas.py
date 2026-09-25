@@ -4,7 +4,7 @@
 XxxOut = 回傳格式。
 """
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -296,6 +296,22 @@ class MovementOut(ORMBase):
     purpose: str | None
     source: str
     notes: str | None
+    created_at: datetime  # 實際寫入時間：沖銷紀錄的日期沿用原紀錄，何時沖銷看這裡
+    reverses_movement_id: int | None  # 這筆是沖銷紀錄時，指向被沖掉的原紀錄
+    reversed_by_id: int | None = None  # 這筆已被沖銷時，是哪一筆沖掉的（列表查詢回填）
+
+
+class MovementReverse(BaseModel):
+    """沖銷一筆異動（更正輸入錯誤）：原因必填，記在沖銷紀錄的備註。"""
+
+    reason: str
+
+    @model_validator(mode="after")
+    def check(self) -> "MovementReverse":
+        self.reason = self.reason.strip()
+        if not self.reason:
+            raise ValueError("請填寫沖銷原因")
+        return self
 
 
 class StockOut(BaseModel):
@@ -339,6 +355,7 @@ class PreorderOut(ORMBase):
     status: str
     status_changed_date: date | None
     notes: str | None
+    shipment_movement_id: int | None
 
 
 class PreorderShip(BaseModel):

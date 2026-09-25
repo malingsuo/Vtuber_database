@@ -14,6 +14,8 @@ const today = () => new Date().toISOString().slice(0, 10)
 const stock = ref(null)
 const movements = ref([])
 const preorders = ref([])
+const shippedPreorders = ref([])
+const showShipped = ref(false)
 
 const TYPE_LABEL = {
   inbound: '入庫',
@@ -28,14 +30,16 @@ const CHANNEL_LABEL = { preorder: '預購', onsite: '現場', online: '通販' }
 async function load() {
   if (!props.variant) return
   const id = props.variant.id
-  const [s, m, p] = await Promise.all([
+  const [s, m, p, sp] = await Promise.all([
     api.get(`/inventory/variants/${id}/stock`),
     api.get(`/inventory/variants/${id}/movements`),
     api.get('/preorders', { params: { variant_id: id, status: 'reserved' } }),
+    api.get('/preorders', { params: { variant_id: id, status: 'shipped' } }),
   ])
   stock.value = s.data
   movements.value = m.data
   preorders.value = p.data
+  shippedPreorders.value = sp.data
 }
 
 watch(
@@ -48,6 +52,7 @@ watch(
       })
       Object.assign(preForm, { quantity: null, created_date: today() })
       opDate.value = today()
+      showShipped.value = false
       load()
     }
   },
@@ -175,36 +180,71 @@ async function shipAll() {
   emit('changed')
 }
 
-// 刪除明細＝動帳，僅限管理者且需重新輸入密碼確認
-async function deleteMovement(m) {
-  const desc = `${m.movement_date}｜${TYPE_LABEL[m.movement_type]}｜` +
-    `${m.quantity_delta > 0 ? '+' : ''}${m.quantity_delta}`
-  let msg = `確定刪除這筆異動明細嗎？\n${desc}`
-  if (m.channel === 'preorder') {
-    msg += '\n注意：這是預購出貨產生的紀錄，刪除後預購狀態不會自動變回圈存'
-  }
-  let password
+// 出貨退回：帳（出貨異動被沖銷）與約（預購改回圈存）在同一交易內還原
+async function unship(p) {
   try {
-    ;({ value: password } = await ElMessageBox.prompt(
-      `${msg}\n\n請輸入你的管理者密碼確認：`,
-      '刪除異動明細（僅限管理者）',
-      {
-        inputType: 'password',
-        confirmButtonText: '刪除',
-        cancelButtonText: '取消',
-        type: 'warning',
-        inputValidator: (v) => !!v || '請輸入密碼',
-      },
-    ))
+    await ElMessageBox.confirm(
+      `預購 #${p.id}（${p.quantity} 件，${p.status_changed_date} 出貨）要退回圈存嗎？` +
+        '原出貨紀錄會保留並標為已沖銷，另新增一筆沖銷紀錄把庫存加回來。',
+      '出貨退回',
+      { confirmButtonText: '退回圈存', cancelButtonText: '取消', type: 'warning' },
+    )
   } catch {
     return
   }
-  await api.delete(`/inventory/movements/${m.id}`, {
-    headers: { 'X-Confirm-Password': password },
-  })
-  ElMessage.success('已刪除')
+  await api.post(`/preorders/${p.id}/unship`)
+  ElMessage.success('已退回圈存，庫存已加回')
   await load()
   emit('changed')
+}
+
+// 流水帳只追加：更正輸入錯誤用「沖銷」（新增反向紀錄、原紀錄保留），
+// 僅限管理者且需重新輸入密碼確認
+const reverseDlg = reactive({
+  visible: false,
+  movement: null,
+  reason: '',
+  password: '',
+  saving: false,
+})
+
+function movementDesc(m) {
+  return `#${m.id}｜${m.movement_date}｜${TYPE_LABEL[m.movement_type]}｜` +
+    `${m.quantity_delta > 0 ? '+' : ''}${m.quantity_delta}`
+}
+
+function openReverse(m) {
+  Object.assign(reverseDlg, { visible: true, movement: m, reason: '', password: '' })
+}
+
+async function submitReverse() {
+  if (!reverseDlg.reason.trim()) {
+    ElMessage.warning('請填寫沖銷原因')
+    return
+  }
+  if (!reverseDlg.password) {
+    ElMessage.warning('請輸入管理者密碼')
+    return
+  }
+  reverseDlg.saving = true
+  try {
+    await api.post(
+      `/inventory/movements/${reverseDlg.movement.id}/reverse`,
+      { reason: reverseDlg.reason.trim() },
+      { headers: { 'X-Confirm-Password': reverseDlg.password } },
+    )
+    ElMessage.success('已沖銷，原紀錄保留')
+    reverseDlg.visible = false
+    await load()
+    emit('changed')
+  } finally {
+    reverseDlg.saving = false
+  }
+}
+
+// created_at 是資料庫以 UTC 記錄的時間（不帶時區），轉成本地時間顯示
+function fmtTime(t) {
+  return new Date(`${t}Z`).toLocaleString('zh-TW', { hour12: false })
 }
 
 function movementText(m) {
@@ -311,32 +351,113 @@ function movementText(m) {
         </el-table>
       </div>
       <div v-else class="hint" style="margin-top: 8px">目前沒有圈存中的預購</div>
+      <div v-if="shippedPreorders.length" style="margin-top: 8px">
+        <el-button link size="small" @click="showShipped = !showShipped">
+          {{ showShipped ? '收合' : '展開' }}已出貨的預購（{{ shippedPreorders.length }} 筆）
+        </el-button>
+        <el-table v-if="showShipped" :data="shippedPreorders" size="small" max-height="200">
+          <el-table-column prop="id" label="#" width="60" />
+          <el-table-column prop="created_date" label="成立日" width="100" />
+          <el-table-column prop="status_changed_date" label="出貨日" width="100" />
+          <el-table-column prop="quantity" label="數量" width="60" align="right" />
+          <el-table-column label="操作" width="90">
+            <template #default="{ row }">
+              <el-button size="small" type="warning" link @click="unship(row)">
+                出貨退回
+              </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
 
       <el-divider content-position="left">異動歷史（新到舊）</el-divider>
       <el-table :data="movements" size="small" max-height="320">
+        <el-table-column prop="id" label="#" width="60" />
         <el-table-column prop="movement_date" label="日期" width="100" />
-        <el-table-column label="類型" width="90">
+        <el-table-column label="類型" width="80">
           <template #default="{ row }">{{ TYPE_LABEL[row.movement_type] }}</template>
         </el-table-column>
-        <el-table-column label="數量" width="70" align="right">
+        <el-table-column label="數量" width="60" align="right">
           <template #default="{ row }">
-            <span :style="{ color: row.quantity_delta < 0 ? '#f56c6c' : '#67c23a' }">
+            <span
+              :class="{ voided: row.reversed_by_id }"
+              :style="{ color: row.quantity_delta < 0 ? '#f56c6c' : '#67c23a' }"
+            >
               {{ row.quantity_delta > 0 ? '+' : '' }}{{ row.quantity_delta }}
             </span>
           </template>
         </el-table-column>
         <el-table-column label="明細" min-width="160">
-          <template #default="{ row }">{{ movementText(row) }}</template>
+          <template #default="{ row }">
+            <el-tooltip
+              v-if="row.reverses_movement_id"
+              :content="`沖銷於 ${fmtTime(row.created_at)}`"
+              placement="top"
+            >
+              <el-tag size="small" type="warning" class="mark">
+                沖銷 #{{ row.reverses_movement_id }}
+              </el-tag>
+            </el-tooltip>
+            <el-tooltip
+              v-else-if="row.reversed_by_id"
+              :content="`由 #${row.reversed_by_id} 沖銷`"
+              placement="top"
+            >
+              <el-tag size="small" type="info" class="mark">已沖銷</el-tag>
+            </el-tooltip>
+            <span :class="{ voided: row.reversed_by_id }">{{ movementText(row) }}</span>
+          </template>
         </el-table-column>
         <el-table-column label="操作" width="60" align="center">
           <template #default="{ row }">
-            <el-button type="danger" link size="small" @click="deleteMovement(row)">
-              刪除
+            <el-button
+              v-if="!row.reverses_movement_id && !row.reversed_by_id"
+              type="danger" link size="small" @click="openReverse(row)"
+            >
+              沖銷
             </el-button>
           </template>
         </el-table-column>
       </el-table>
     </template>
+
+    <el-dialog
+      v-model="reverseDlg.visible" title="沖銷異動（僅限管理者）" width="440px"
+      append-to-body
+    >
+      <template v-if="reverseDlg.movement">
+        <div style="font-weight: bold">{{ movementDesc(reverseDlg.movement) }}</div>
+        <div class="hint">
+          會新增一筆數量相反的沖銷紀錄，日期沿用原紀錄（{{ reverseDlg.movement.movement_date }}），
+          原紀錄保留並標為「已沖銷」。真的退貨請改記「銷售退回」。
+        </div>
+        <el-alert
+          v-if="reverseDlg.movement.channel === 'preorder'"
+          type="warning" :closable="false" show-icon style="margin-top: 8px"
+          title="預購出貨產生的銷售不能在這裡沖銷，請改用上方預購區「已出貨的預購」的「出貨退回」"
+        />
+        <el-form label-position="top" style="margin-top: 12px">
+          <el-form-item label="沖銷原因" required>
+            <el-input
+              v-model="reverseDlg.reason" type="textarea" :rows="2"
+              placeholder="例：數量輸入錯誤，應為 30"
+            />
+          </el-form-item>
+          <el-form-item label="管理者密碼" required>
+            <el-input
+              v-model="reverseDlg.password" type="password" show-password
+              @keyup.enter="submitReverse"
+            />
+          </el-form-item>
+        </el-form>
+      </template>
+      <template #footer>
+        <el-button @click="reverseDlg.visible = false">取消</el-button>
+        <el-button type="danger" :loading="reverseDlg.saving" @click="submitReverse">
+          沖銷
+        </el-button>
+      </template>
+    </el-dialog>
   </el-drawer>
 </template>
 
@@ -348,5 +469,12 @@ function movementText(m) {
   font-size: 12px;
   color: #909399;
   margin-top: 6px;
+}
+.voided {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+.mark {
+  margin-right: 4px;
 }
 </style>

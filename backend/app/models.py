@@ -210,7 +210,15 @@ class ProductVariant(CompanyMixin, TimestampMixin, Base):
 
 
 class BundleItem(CompanyMixin, TimestampMixin, Base):
-    """套組內容物：賣一套時系統對每個內容物各產生一筆庫存異動。"""
+    """套組內容物（組成定義，不驅動庫存）。
+
+    套組有自己的規格與庫存（production_qty＝套組份數），賣一套只在套組自己的
+    規格上記一筆銷售，內容物不產生異動；營收攤回內容物是報表讀取時才算
+    （reports._apply_bundle_allocation）。
+    將來若改成「賣套組時扣內容物庫存」，那組內容物異動必須加群組欄位，
+    且只能整組沖銷、不可單筆沖銷——只沖一件內容物，套組營收還在、
+    內容物庫存卻加回來，帳就歪了。
+    """
 
     __tablename__ = "bundle_items"
 
@@ -242,12 +250,28 @@ class Preorder(CompanyMixin, TimestampMixin, Base):
     status_changed_date: Mapped[date | None] = mapped_column(Date)
     source: Mapped[str] = mapped_column(String(20), default=RecordSource.MANUAL.value)
     notes: Mapped[str | None] = mapped_column(Text)
+    # 出貨產生的那筆銷售異動：出貨退回時直接據此沖銷。
+    # 欄位加入前出貨的舊資料為 NULL，退回時才退回用比對猜測
+    shipment_movement_id: Mapped[int | None] = mapped_column(
+        ForeignKey("inventory_movements.id", name="fk_preorders_shipment_movement_id")
+    )
 
     variant: Mapped["ProductVariant"] = relationship()
 
+    __table_args__ = (
+        UniqueConstraint(
+            "shipment_movement_id", name="uq_preorders_shipment_movement_id"
+        ),
+    )
+
 
 class InventoryMovement(CompanyMixin, Base):
-    """庫存流水帳（系統核心）。目前庫存永遠是 quantity_delta 加總算出來的。"""
+    """庫存流水帳（系統核心）。目前庫存永遠是 quantity_delta 加總算出來的。
+
+    只追加：沒有修改也沒有刪除的路徑。更正一律「沖銷」——新增一筆反向紀錄，
+    除 quantity_delta 取負、sold_out_today 為 NULL 外，類型、日期、通路、
+    成交價等維度全部照抄原紀錄，所以任何依維度分組的加總都會自動抵銷。
+    """
 
     __tablename__ = "inventory_movements"
 
@@ -270,8 +294,22 @@ class InventoryMovement(CompanyMixin, Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )
+    # 沖銷紀錄專用：指向被沖掉的原紀錄；unique 保證一筆最多被沖銷一次
+    reverses_movement_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "inventory_movements.id",
+            name="fk_inventory_movements_reverses_movement_id",
+        )
+    )
 
     variant: Mapped["ProductVariant"] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint(
+            "reverses_movement_id",
+            name="uq_inventory_movements_reverses_movement_id",
+        ),
+    )
 
 
 class Quote(CompanyMixin, TimestampMixin, Base):
