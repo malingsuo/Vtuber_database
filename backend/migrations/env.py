@@ -67,7 +67,13 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata,
+            # autogenerate 一律產生 batch_alter_table 寫法：SQLite 不支援大部分
+            # ALTER TABLE，batch 會改用「建新表→搬資料→換名」；PostgreSQL 上
+            # 仍是同一句 ALTER TABLE。不能只在連 SQLite 時開——autogenerate 平常
+            # 連的是 PostgreSQL，條件永遠不成立
+            render_as_batch=True,
         )
 
         with context.begin_transaction():
