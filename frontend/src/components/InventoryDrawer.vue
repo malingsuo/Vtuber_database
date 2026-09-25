@@ -49,6 +49,7 @@ watch(
       Object.assign(moveForm, {
         movement_type: 'inbound', quantity: null,
         movement_date: today(), recipient: '', purpose: '', notes: '',
+        channel: null, sale_price_twd: null,
       })
       Object.assign(preForm, { quantity: null, created_date: today() })
       opDate.value = today()
@@ -66,12 +67,19 @@ const moveForm = reactive({
   recipient: '',
   purpose: '',
   notes: '',
+  channel: null, // 銷售退回專用：從哪個通路的營收扣回
+  sale_price_twd: null, // 銷售退回專用：退款單價，不填用定價
 })
 const savingMove = ref(false)
 
 async function submitMovement() {
   if (!moveForm.quantity) {
     ElMessage.warning('請填數量')
+    return
+  }
+  const isReturn = moveForm.movement_type === 'sale_return'
+  if (isReturn && !moveForm.channel) {
+    ElMessage.warning('請選擇退回的通路')
     return
   }
   // 這筆異動會讓可售變負（吃到圈存的貨）時，先提醒再寫入
@@ -122,6 +130,8 @@ async function submitMovement() {
       movement_type: moveForm.movement_type,
       quantity: moveForm.quantity,
       movement_date: moveForm.movement_date,
+      channel: isReturn ? moveForm.channel : null,
+      sale_price_twd: isReturn ? moveForm.sale_price_twd : null,
       recipient: moveForm.recipient || null,
       purpose: moveForm.purpose || null,
       notes: moveForm.notes || null,
@@ -129,6 +139,7 @@ async function submitMovement() {
     ElMessage.success('異動已寫入')
     moveForm.quantity = null
     moveForm.notes = ''
+    moveForm.sale_price_twd = null
     await load()
     emit('changed')
   } finally {
@@ -301,6 +312,23 @@ function movementText(m) {
           style="width: 140px"
         />
       </el-space>
+      <template v-if="moveForm.movement_type === 'sale_return'">
+        <el-space wrap style="margin-top: 8px">
+          <el-select v-model="moveForm.channel" placeholder="退回的通路（必填）" style="width: 160px">
+            <el-option label="預購" value="preorder" />
+            <el-option label="現場" value="onsite" />
+            <el-option label="通販" value="online" />
+          </el-select>
+          <el-input-number
+            v-model="moveForm.sale_price_twd" :min="0" :controls="false"
+            :placeholder="`退款單價（預設定價 ${variant?.price ?? ''}）`" style="width: 200px"
+          />
+        </el-space>
+        <div class="hint">
+          銷售退回＝客人真的退貨，會從所選通路的營收扣回「數量 × 退款單價」；
+          折扣賣出的請填實際退款單價。只是輸入錯誤請改用異動歷史的「沖銷」
+        </div>
+      </template>
       <el-space v-if="moveForm.movement_type === 'pr_gift'" wrap style="margin-top: 8px">
         <el-input v-model="moveForm.recipient" placeholder="對象（必填）" style="width: 160px" />
         <el-input v-model="moveForm.purpose" placeholder="用途" style="width: 160px" />

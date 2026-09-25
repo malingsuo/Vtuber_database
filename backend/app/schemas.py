@@ -278,6 +278,8 @@ class MovementCreate(BaseModel):
             raise ValueError("數量必須為正數")
         if self.movement_type == "sale" and self.channel is None:
             raise ValueError("銷售必須指定通路")
+        if self.movement_type == "sale_return" and self.channel is None:
+            raise ValueError("銷售退回必須指定通路（要從哪個通路的營收扣回）")
         if self.movement_type == "pr_gift" and not self.recipient:
             raise ValueError("轉公關品請填寫對象")
         return self

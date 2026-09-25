@@ -258,7 +258,12 @@ def create_movement(
         raise HTTPException(409, "實體庫存不足，無法扣除這個數量")
 
     sale_price = body.sale_price_twd
-    if body.movement_type == MovementType.SALE.value and sale_price is None:
+    # 銷售退回也要帶單價：營收＝Σ(−數量×單價)，單價空白以 0 計，退貨就扣不到營收。
+    # 退回沒有連結原銷售、查不到當時成交價，預設用定價；折扣賣出的由呼叫端傳實際退款單價
+    if (
+        body.movement_type in (MovementType.SALE.value, MovementType.SALE_RETURN.value)
+        and sale_price is None
+    ):
         sale_price = default_price(db, variant)
 
     movement = InventoryMovement(
